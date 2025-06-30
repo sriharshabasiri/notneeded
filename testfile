@@ -1,1 +1,103 @@
+from bs4 import BeautifulSoup
+from shareplum import Site, Office365
+from shareplum.site import Version
+import pandas as pd
 
+# Configuration - Update these values
+SHAREPOINT_URL = "https://yourcompany.sharepoint.com"
+SHAREPOINT_SITE = "/sites/YourSiteName"
+SHAREPOINT_PAGE_URL = "SitePages/YourPageName.aspx"  # Relative URL of the page
+SHAREPOINT_USERNAME = "your_username@yourcompany.com"
+SHAREPOINT_PASSWORD = "your_password"
+
+def get_sharepoint_page_content():
+    """Authenticate to SharePoint and retrieve page content"""
+    try:
+        # Authenticate to SharePoint Online
+        authcookie = Office365(
+            SHAREPOINT_URL, 
+            username=SHAREPOINT_USERNAME, 
+            password=SHAREPOINT_PASSWORD
+        ).GetCookies()
+        
+        # Connect to the SharePoint site
+        site = Site(
+            SHAREPOINT_URL + SHAREPOINT_SITE, 
+            version=Version.v365, 
+            authcookie=authcookie
+        )
+        
+        # Get the page content
+        page = site.Page(SHAREPOINT_PAGE_URL)
+        return page.GetPageContent()
+        
+    except Exception as e:
+        print(f"Error accessing SharePoint: {str(e)}")
+        return None
+
+def extract_tables_from_html(html_content):
+    """Extract tables from HTML content using BeautifulSoup"""
+    soup = BeautifulSoup(html_content, 'html.parser')
+    tables = soup.find_all('table')
+    
+    extracted_tables = []
+    
+    for i, table in enumerate(tables, 1):
+        # Extract table headers if they exist
+        headers = []
+        header_row = table.find('tr')
+        if header_row:
+            headers = [th.get_text(strip=True) for th in header_row.find_all(['th', 'td'])]
+        
+        # Extract table rows
+        rows = []
+        for row in table.find_all('tr'):
+            cells = row.find_all(['td', 'th'])
+            if cells:
+                rows.append([cell.get_text(strip=True) for cell in cells])
+        
+        # Create a DataFrame for better handling
+        if headers and rows:
+            df = pd.DataFrame(rows[1:], columns=headers)
+        elif rows:
+            df = pd.DataFrame(rows)
+        else:
+            df = pd.DataFrame()
+        
+        extracted_tables.append({
+            'table_number': i,
+            'headers': headers,
+            'data': rows,
+            'dataframe': df
+        })
+    
+    return extracted_tables
+
+def main():
+    print("Starting SharePoint page extraction...")
+    
+    # Step 1: Get page content from SharePoint
+    page_content = get_sharepoint_page_content()
+    if not page_content:
+        print("Failed to retrieve page content")
+        return
+    
+    # Step 2: Extract tables from the page
+    tables = extract_tables_from_html(page_content)
+    
+    # Step 3: Display results
+    print(f"\nFound {len(tables)} tables on the page")
+    
+    for table in tables:
+        print(f"\nTable {table['table_number']}:")
+        print(f"Headers: {table['headers']}")
+        print("Data Preview:")
+        print(table['dataframe'].head())
+        
+        # Optionally save to CSV
+        # table['dataframe'].to_csv(f"table_{table['table_number']}.csv", index=False)
+    
+    print("\nExtraction complete")
+
+if __name__ == "__main__":
+    main()
