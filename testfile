@@ -1,1 +1,174 @@
+import re
+import subprocess
+from datetime import datetime, timedelta
+from datadog import initialize, statsd
 
+# Initialize DogStatsD
+initialize(statsd_host='localhost', statsd_port=8125)
+
+# Configuration
+LOG_FILE = 'LOG.txt'
+DATE_FMT = '%d-%m-%y'
+
+def get_dates():
+    """Get current date and previous date in required format"""
+    current_date = datetime.now()
+    prev_date = current_date - timedelta(days=1)
+    return {
+        'current': current_date.strftime(DATE_FMT),
+        'previous': prev_date.strftime(DATE_FMT)
+    }
+
+def grep_log(pattern):
+    """Use grep to efficiently search large log files (Python 3.5+ compatible)"""
+    try:
+        process = subprocess.Popen(
+            ['grep', '-a', '-E', pattern, LOG_FILE],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
+        )
+        stdout, stderr = process.communicate()
+        return stdout.splitlines()
+    except Exception as e:
+        print(f"Error running grep: {str(e)}")
+        return []
+
+def extract_timings():
+    """Extract timings using grep and regex"""
+    dates = get_dates()
+    metrics = {}
+
+    # Patterns to search for each metric
+    search_patterns = {
+        'eod_bod': {
+            'start': {
+                'grep_pattern': 'SC195 195 START',
+                'regex': r'SC195 195 START (\d{2}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})',
+                'target_date': dates['previous']
+            },
+            'end': {
+                'grep_pattern': 'PPBOV 295 START',
+                'regex': r'PPBOV 295 START (\d{2}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})',
+                'target_date': dates['current']
+            }
+        },
+        'ach_300': {
+            'start': {
+                'grep_pattern': 'PEPI3 START',
+                'regex': r'PEPI3 START (\d{2}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})',
+                'target_date': dates['current']
+            },
+            'end': {
+                'grep_pattern': 'ACHSV 295 END',
+                'regex': r'ACHSV 295 END (\d{2}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})',
+                'target_date': dates['current']
+            }
+        },
+        'ach_700': {
+            'start': {
+                'grep_pattern': 'PIAB7 START',
+                'regex': r'PIAB7 START (\d{2}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})',
+                'target_date': dates['current']
+            },
+            'end': {
+                'grep_pattern': 'ACHFV 295 END',
+                'regex': r'ACHFV 295 END (\d{2}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})',
+                'target_date': dates['current']
+            }
+        }
+    }
+
+    for batch_name, batch_config in search_patterns.items():
+        metrics[batch_name] = {}
+        
+        for timing_type, config in batch_config.items():
+            # Initialize with empty values
+            metrics[batch_name][timing_type] = {
+                'date': '',
+                'time': '',
+                'datetime': '',
+                'found': False
+            }
+            
+            # First use grep to find relevant lines quickly
+            lines = grep_log(config['grep_pattern'])
+            
+            # Then apply precise regex to matching lines
+            for line in lines:
+                match = re.search(config['regex'], line)
+                if match:
+                    date_str, time_str = match.groups()
+                    if date_str == config['target_date']:
+                        metrics[batch_name][timing_type] = {
+                            'date': date_str,
+                            'time': time_str,
+                            'datetime': f"{date_str} {time_str}",
+                            'found': True
+                        }
+                        break  # Only need the first match per metric
+
+    return metrics
+
+def send_to_datadog(metrics):
+    """Send metrics to Datadog with batch names and timing tags"""
+    for batch_name, timings in metrics.items():
+        try:
+            # Prepare tags
+            tags = [
+                f'batch:{batch_name}',
+                'metric_type:batch_timing'
+            ]
+            
+            # Add timing tags
+            for timing_type, data in timings.items():
+                if data['found']:
+                    tags.append(f'{timing_type}_time:{data["time"]}')
+                    tags.append(f'{timing_type}_date:{data["date"]}')
+                else:
+                    tags.append(f'{timing_type}_time:not_found')
+                    tags.append(f'{timing_type}_date:not_found')
+            
+            # Calculate duration if both start and end are found
+            if timings['start']['found'] and timings['end']['found']:
+                try:
+                    start_dt = datetime.strptime(timings['start']['datetime'], f"{DATE_FMT} %H:%M:%S")
+                    end_dt = datetime.strptime(timings['end']['datetime'], f"{DATE_FMT} %H:%M:%S")
+                    duration = int((end_dt - start_dt).total_seconds())
+                    tags.append(f'duration_seconds:{duration}')
+                except Exception as e:
+                    print(f"Error calculating duration for {batch_name}: {str(e)}")
+            
+            # Send batch metric (using 1 as value since we're using tags for timing info)
+            statsd.gauge(
+                f'batch_processing.{batch_name}',
+                value=1,
+                tags=tags
+            )
+            
+            # Send events for each found timing
+            for timing_type, data in timings.items():
+                if data['found']:
+                    statsd.event(
+                        title=f"Batch Processing - {batch_name} {timing_type}",
+                        message=f"Occurred at {data['datetime']}",
+                        tags=[f'batch:{batch_name}', 'source:log_processing']
+                    )
+                    
+        except Exception as e:
+            print(f"Error processing batch {batch_name}: {str(e)}")
+
+if __name__ == "__main__":
+    print("Processing large log file with grep...")
+    metrics = extract_timings()
+    
+    print("\nMetrics found:")
+    for batch_name, timings in metrics.items():
+        print(f"\n{batch_name}:")
+        for timing_type, data in timings.items():
+            status = data['datetime'] if data['found'] else "Not found"
+            print(f"  {timing_type}: {status}")
+    
+    print("\nSending to Datadog...")
+    send_to_datadog(metrics)
+    print("\nDone!")
