@@ -1,1 +1,133 @@
 
+import re
+import subprocess
+from datetime import datetime, timedelta
+from datadog import initialize, statsd
+
+# Initialize DogStatsD
+initialize(statsd_host='localhost', statsd_port=8125)
+
+# Configuration
+LOG_FILE = 'LOG.txt'
+DATE_FMT = '%d-%m-%y'
+
+def get_dates():
+    """Get current date and previous date in required format"""
+    current_date = datetime.now()
+    prev_date = current_date - timedelta(days=1)
+    return {
+        'current': current_date.strftime(DATE_FMT),
+        'previous': prev_date.strftime(DATE_FMT)
+    }
+
+def grep_log(pattern):
+    """Use grep to efficiently search large log files"""
+    try:
+        result = subprocess.run(
+            ['grep', '-a', '-E', pattern, LOG_FILE],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return result.stdout.splitlines()
+    except subprocess.CalledProcessError:
+        return []
+
+def extract_timings():
+    """Extract timings using grep and regex"""
+    dates = get_dates()
+    metrics = {}
+
+    # Patterns to search for each metric
+    search_patterns = {
+        'eod_bod_start': {
+            'grep_pattern': 'SC195 195 START',
+            'regex': r'SC195 195 START (\d{2}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})',
+            'target_date': dates['previous']
+        },
+        'eod_bod_end': {
+            'grep_pattern': 'PPBOV 295 START',
+            'regex': r'PPBOV 295 START (\d{2}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})',
+            'target_date': dates['current']
+        },
+        'ach_300_start': {
+            'grep_pattern': 'PEPI3 START',
+            'regex': r'PEPI3 START (\d{2}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})',
+            'target_date': dates['current']
+        },
+        'ach_300_end': {
+            'grep_pattern': 'ACHSV 295 END',
+            'regex': r'ACHSV 295 END (\d{2}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})',
+            'target_date': dates['current']
+        },
+        'ach_700_start': {
+            'grep_pattern': 'PIAB7 START',
+            'regex': r'PIAB7 START (\d{2}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})',
+            'target_date': dates['current']
+        },
+        'ach_700_end': {
+            'grep_pattern': 'ACHFV 295 END',
+            'regex': r'ACHFV 295 END (\d{2}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})',
+            'target_date': dates['current']
+        }
+    }
+
+    for metric_name, config in search_patterns.items():
+        # First use grep to find relevant lines quickly
+        lines = grep_log(config['grep_pattern'])
+        
+        # Then apply precise regex to matching lines
+        for line in lines:
+            match = re.search(config['regex'], line)
+            if match:
+                date_str, time_str = match.groups()
+                if date_str == config['target_date']:
+                    metrics[metric_name] = {
+                        'date': date_str,
+                        'time': time_str,
+                        'datetime': f"{date_str} {time_str}"
+                    }
+                    break  # Only need the first match per metric
+
+    return metrics
+
+def send_to_datadog(metrics):
+    """Send metrics to Datadog"""
+    for metric_name, data in metrics.items():
+        # Convert to Unix timestamp
+        dt = datetime.strptime(data['datetime'], f"{DATE_FMT} %H:%M:%S")
+        unix_ts = int(dt.timestamp())
+        
+        # Send as gauge metric with timestamp
+        statsd.gauge(
+            f'batch_processing.{metric_name}',
+            value=unix_ts,
+            tags=[
+                f'metric_type:timestamp',
+                f'batch:{metric_name}',
+                f'date:{data["date"]}',
+                f'time:{data["time"]}'
+            ]
+        )
+        
+        # Also send as event for visibility
+        statsd.event(
+            title=f"Batch Processing - {metric_name.replace('_', ' ').title()}",
+            message=f"Occurred at {data['datetime']}",
+            tags=[f'batch:{metric_name}', 'source:log_processing']
+        )
+
+if __name__ == "__main__":
+    print("Processing large log file with grep...")
+    metrics = extract_timings()
+    
+    if metrics:
+        print("Found metrics:")
+        for name, data in metrics.items():
+            print(f"{name}: {data['datetime']}")
+        
+        print("\nSending to Datadog...")
+        send_to_datadog(metrics)
+        print("Done!")
+    else:
+        print("No matching metrics found in log file")
