@@ -1,1 +1,642 @@
+transaction-app/
+├── backend/ (Spring Boot GraphQL service)
+│   ├── src/main/java/com/example/transactionapp/
+│   │   ├── config/
+│   │   ├── controller/
+│   │   ├── model/
+│   │   ├── repository/
+│   │   ├── service/
+│   │   └── TransactionAppApplication.java
+│   ├── src/main/resources/
+│   └── pom.xml
+└── frontend/ (React application)
+    ├── public/
+    ├── src/
+    │   ├── components/
+    │   ├── graphql/
+    │   ├── pages/
+    │   ├── App.js
+    │   └── index.js
+    ├── package.json
+    └── ...
 
+
+
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.1.0</version>
+        <relativePath/>
+    </parent>
+    
+    <groupId>com.example</groupId>
+    <artifactId>transaction-app</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>transaction-app</name>
+    <description>Transaction Analysis Application</description>
+    
+    <properties>
+        <java.version>17</java.version>
+        <graphql-java.version>20.2</graphql-java.version>
+        <graphql-java-tools.version>13.0.0</graphql-java-tools.version>
+    </properties>
+    
+    <dependencies>
+        <!-- Spring Boot Starters -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-graphql</artifactId>
+        </dependency>
+        
+        <!-- Database -->
+        <dependency>
+            <groupId>com.oracle.database.jdbc</groupId>
+            <artifactId>ojdbc8</artifactId>
+            <version>21.5.0.0</version>
+        </dependency>
+        
+        <!-- GraphQL -->
+        <dependency>
+            <groupId>com.graphql-java</groupId>
+            <artifactId>graphql-java</artifactId>
+            <version>${graphql-java.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.graphql-java-kickstart</groupId>
+            <artifactId>graphql-java-tools</artifactId>
+            <version>${graphql-java-tools.version}</version>
+        </dependency>
+        
+        <!-- Lombok -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+        
+        <!-- Testing -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.graphql</groupId>
+            <artifactId>spring-graphql-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+
+
+Transaction.java
+------------------
+package com.example.transactionapp.model;
+
+import jakarta.persistence.*;
+import lombok.Data;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "TRANSACTIONS")
+@Data
+public class Transaction {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(name = "TRANSACTION_TYPE")
+    private String transactionType;
+    
+    @Column(name = "AMOUNT")
+    private BigDecimal amount;
+    
+    @Column(name = "CURRENCY")
+    private String currency;
+    
+    @Column(name = "TRANSACTION_DATE")
+    private LocalDateTime transactionDate;
+    
+    @Column(name = "DESCRIPTION")
+    private String description;
+    
+    @Column(name = "ACCOUNT_NUMBER")
+    private String accountNumber;
+    
+    @Column(name = "STATUS")
+    private String status;
+    
+    @Column(name = "CREATED_AT")
+    private LocalDateTime createdAt;
+    
+    @Column(name = "UPDATED_AT")
+    private LocalDateTime updatedAt;
+}
+
+
+
+TransactionRepository.java
+----------------------------
+package com.example.transactionapp.repository;
+
+import com.example.transactionapp.model.Transaction;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Repository
+public interface TransactionRepository extends JpaRepository<Transaction, Long> {
+    
+    @Query("SELECT t FROM Transaction t WHERE " +
+           "(:transactionType IS NULL OR t.transactionType = :transactionType) AND " +
+           "t.transactionDate BETWEEN :fromDate AND :toDate")
+    List<Transaction> findTransactionsByCriteria(
+            @Param("transactionType") String transactionType,
+            @Param("fromDate") LocalDateTime fromDate,
+            @Param("toDate") LocalDateTime toDate);
+    
+    @Query("SELECT COUNT(t) FROM Transaction t WHERE " +
+           "(:transactionType IS NULL OR t.transactionType = :transactionType) AND " +
+           "t.transactionDate BETWEEN :fromDate AND :toDate")
+    Long countTransactionsByCriteria(
+            @Param("transactionType") String transactionType,
+            @Param("fromDate") LocalDateTime fromDate,
+            @Param("toDate") LocalDateTime toDate);
+}
+
+
+TransactionService.java
+------------------------
+package com.example.transactionapp.service;
+
+import com.example.transactionapp.model.Transaction;
+import com.example.transactionapp.repository.TransactionRepository;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Service
+public class TransactionService {
+    
+    private final TransactionRepository transactionRepository;
+    
+    public TransactionService(TransactionRepository transactionRepository) {
+        this.transactionRepository = transactionRepository;
+    }
+    
+    public List<Transaction> getTransactions(String transactionType, LocalDateTime fromDate, LocalDateTime toDate) {
+        return transactionRepository.findTransactionsByCriteria(transactionType, fromDate, toDate);
+    }
+    
+    public Long getTransactionCount(String transactionType, LocalDateTime fromDate, LocalDateTime toDate) {
+        return transactionRepository.countTransactionsByCriteria(transactionType, fromDate, toDate);
+    }
+}
+
+TransactionGraphQLController.java
+----------------------------------
+package com.example.transactionapp.controller;
+
+import com.example.transactionapp.model.Transaction;
+import com.example.transactionapp.service.TransactionService;
+import org.springframework.graphql.data.method.annotation.Argument;
+import org.springframework.graphql.data.method.annotation.QueryMapping;
+import org.springframework.stereotype.Controller;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Controller
+public class TransactionGraphQLController {
+    
+    private final TransactionService transactionService;
+    
+    public TransactionGraphQLController(TransactionService transactionService) {
+        this.transactionService = transactionService;
+    }
+    
+    @QueryMapping
+    public List<Transaction> transactions(
+            @Argument String transactionType,
+            @Argument String fromDate,
+            @Argument String toDate) {
+        
+        LocalDateTime from = LocalDateTime.parse(fromDate);
+        LocalDateTime to = LocalDateTime.parse(toDate);
+        
+        return transactionService.getTransactions(transactionType, from, to);
+    }
+    
+    @QueryMapping
+    public Long transactionCount(
+            @Argument String transactionType,
+            @Argument String fromDate,
+            @Argument String toDate) {
+        
+        LocalDateTime from = LocalDateTime.parse(fromDate);
+        LocalDateTime to = LocalDateTime.parse(toDate);
+        
+        return transactionService.getTransactionCount(transactionType, from, to);
+    }
+}
+
+schema.graphqls
+----------------
+type Transaction {
+    id: ID!
+    transactionType: String!
+    amount: Float!
+    currency: String!
+    transactionDate: String!
+    description: String
+    accountNumber: String!
+    status: String!
+    createdAt: String!
+    updatedAt: String!
+}
+
+type Query {
+    transactions(
+        transactionType: String,
+        fromDate: String!,
+        toDate: String!
+    ): [Transaction]!
+    
+    transactionCount(
+        transactionType: String,
+        fromDate: String!,
+        toDate: String!
+    ): Long!
+}
+
+application.yml
+---------------
+spring:
+  datasource:
+    url: jdbc:oracle:thin:@localhost:1521:ORCL
+    username: your_username
+    password: your_password
+    driver-class-name: oracle.jdbc.OracleDriver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.Oracle12cDialect
+        format_sql: true
+  graphql:
+    graphiql:
+      enabled: true
+      path: /graphiql
+    schema:
+      printer:
+        enabled: true
+server:
+  port: 8080
+
+
+main
+-----
+package com.example.transactionapp;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class TransactionAppApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(TransactionAppApplication.class, args);
+    }
+}
+
+
+
+frontend
+============
+npm install @apollo/client graphql date-fns @mui/material @mui/x-date-pickers @emotion/react @emotion/styled
+
+graphql/client.js
+-----------------
+import { ApolloClient, InMemoryCache } from '@apollo/client';
+
+const client = new ApolloClient({
+  uri: 'http://localhost:8080/graphql',
+  cache: new InMemoryCache(),
+});
+
+export default client;
+
+
+graphql/queries.js
+-------------------
+import { gql } from '@apollo/client';
+
+export const GET_TRANSACTIONS = gql`
+  query GetTransactions(
+    $transactionType: String
+    $fromDate: String!
+    $toDate: String!
+  ) {
+    transactions(
+      transactionType: $transactionType
+      fromDate: $fromDate
+      toDate: $toDate
+    ) {
+      id
+      transactionType
+      amount
+      currency
+      transactionDate
+      description
+      accountNumber
+      status
+      createdAt
+      updatedAt
+    }
+  }
+`;
+
+export const GET_TRANSACTION_COUNT = gql`
+  query GetTransactionCount(
+    $transactionType: String
+    $fromDate: String!
+    $toDate: String!
+  ) {
+    transactionCount(
+      transactionType: $transactionType
+      fromDate: $fromDate
+      toDate: $toDate
+    )
+  }
+`;
+
+
+utils/dateUtils.js
+-------------------
+import { format, parseISO } from 'date-fns';
+
+export const formatToISO = (date) => {
+  return date.toISOString();
+};
+
+export const formatDateForDisplay = (dateString) => {
+  return format(parseISO(dateString), 'MMM dd, yyyy HH:mm:ss');
+};
+
+
+components/TransactionForm.js
+------------------------------
+import React, { useState } from 'react';
+import { useLazyQuery } from '@apollo/client';
+import { GET_TRANSACTIONS, GET_TRANSACTION_COUNT } from '../graphql/queries';
+import { formatToISO } from '../utils/dateUtils';
+import {
+  Box,
+  Button,
+  FormControl,
+  InputLabel,
+  MenuItem,
+  Select,
+  Typography,
+} from '@mui/material';
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+
+const TransactionForm = ({ onDataLoaded, onCountLoaded }) => {
+  const [transactionType, setTransactionType] = useState('');
+  const [fromDate, setFromDate] = useState(null);
+  const [toDate, setToDate] = useState(null);
+  
+  const [getTransactions, { loading: transactionsLoading }] = useLazyQuery(
+    GET_TRANSACTIONS,
+    {
+      onCompleted: (data) => onDataLoaded(data.transactions),
+    }
+  );
+  
+  const [getTransactionCount, { loading: countLoading }] = useLazyQuery(
+    GET_TRANSACTION_COUNT,
+    {
+      onCompleted: (data) => onCountLoaded(data.transactionCount),
+    }
+  );
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!fromDate || !toDate) return;
+    
+    const variables = {
+      transactionType: transactionType || null,
+      fromDate: formatToISO(fromDate),
+      toDate: formatToISO(toDate),
+    };
+    
+    getTransactions({ variables });
+    getTransactionCount({ variables });
+  };
+
+  return (
+    <Box component="form" onSubmit={handleSubmit} sx={{ mb: 4 }}>
+      <Typography variant="h5" gutterBottom>
+        Transaction Query
+      </Typography>
+      
+      <FormControl fullWidth sx={{ mb: 2 }}>
+        <InputLabel id="transaction-type-label">Transaction Type</InputLabel>
+        <Select
+          labelId="transaction-type-label"
+          value={transactionType}
+          label="Transaction Type"
+          onChange={(e) => setTransactionType(e.target.value)}
+        >
+          <MenuItem value="">All Types</MenuItem>
+          <MenuItem value="DEPOSIT">Deposit</MenuItem>
+          <MenuItem value="WITHDRAWAL">Withdrawal</MenuItem>
+          <MenuItem value="TRANSFER">Transfer</MenuItem>
+          <MenuItem value="PAYMENT">Payment</MenuItem>
+        </Select>
+      </FormControl>
+      
+      <LocalizationProvider dateAdapter={AdapterDateFns}>
+        <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+          <DatePicker
+            label="From Date"
+            value={fromDate}
+            onChange={setFromDate}
+            slotProps={{ textField: { fullWidth: true } }}
+          />
+          <DatePicker
+            label="To Date"
+            value={toDate}
+            onChange={setToDate}
+            slotProps={{ textField: { fullWidth: true } }}
+          />
+        </Box>
+      </LocalizationProvider>
+      
+      <Button
+        type="submit"
+        variant="contained"
+        disabled={transactionsLoading || countLoading || !fromDate || !toDate}
+      >
+        {transactionsLoading || countLoading ? 'Loading...' : 'Query Transactions'}
+      </Button>
+    </Box>
+  );
+};
+
+export default TransactionForm;
+
+
+components/TransactionTable.js
+------------------------------
+import React from 'react';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  Typography,
+} from '@mui/material';
+import { formatDateForDisplay } from '../utils/dateUtils';
+
+const TransactionTable = ({ transactions }) => {
+  if (!transactions || transactions.length === 0) {
+    return (
+      <Typography variant="body1" sx={{ mt: 2 }}>
+        No transactions found.
+      </Typography>
+    );
+  }
+
+  return (
+    <TableContainer component={Paper} sx={{ mt: 2 }}>
+      <Table>
+        <TableHead>
+          <TableRow>
+            <TableCell>ID</TableCell>
+            <TableCell>Type</TableCell>
+            <TableCell>Amount</TableCell>
+            <TableCell>Currency</TableCell>
+            <TableCell>Date</TableCell>
+            <TableCell>Description</TableCell>
+            <TableCell>Account</TableCell>
+            <TableCell>Status</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {transactions.map((transaction) => (
+            <TableRow key={transaction.id}>
+              <TableCell>{transaction.id}</TableCell>
+              <TableCell>{transaction.transactionType}</TableCell>
+              <TableCell>{transaction.amount}</TableCell>
+              <TableCell>{transaction.currency}</TableCell>
+              <TableCell>{formatDateForDisplay(transaction.transactionDate)}</TableCell>
+              <TableCell>{transaction.description}</TableCell>
+              <TableCell>{transaction.accountNumber}</TableCell>
+              <TableCell>{transaction.status}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  );
+};
+
+export default TransactionTable;
+
+
+App.js
+-------
+import React, { useState } from 'react';
+import { ApolloProvider } from '@apollo/client';
+import client from './graphql/client';
+import TransactionForm from './components/TransactionForm';
+import TransactionTable from './components/TransactionTable';
+import { Box, Typography } from '@mui/material';
+
+function App() {
+  const [transactions, setTransactions] = useState([]);
+  const [count, setCount] = useState(null);
+
+  return (
+    <ApolloProvider client={client}>
+      <Box sx={{ maxWidth: 1200, mx: 'auto', p: 3 }}>
+        <Typography variant="h4" component="h1" gutterBottom>
+          Transaction Analysis
+        </Typography>
+        
+        <TransactionForm
+          onDataLoaded={setTransactions}
+          onCountLoaded={setCount}
+        />
+        
+        {count !== null && (
+          <Typography variant="h6" gutterBottom>
+            Total Transactions: {count}
+          </Typography>
+        )}
+        
+        <TransactionTable transactions={transactions} />
+      </Box>
+    </ApolloProvider>
+  );
+}
+
+export default App;
+
+Index.js
+---------
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import { CssBaseline } from '@mui/material';
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
+  <React.StrictMode>
+    <CssBaseline />
+    <App />
+  </React.StrictMode>
+);
