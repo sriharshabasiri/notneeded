@@ -1,1 +1,104 @@
+import React, { useState } from 'react';
+import { useQuery } from '@apollo/client';
+import { GET_TRANSACTIONS, GET_TRANSACTION_COUNT } from '../graphql/queries';
+import { 
+  TextField, 
+  Button, 
+  FormControl, 
+  InputLabel, 
+  Select, 
+  MenuItem, 
+  Checkbox, 
+  ListItemText, 
+  Grid, 
+  Paper,
+  Typography
+} from '@mui/material';
+import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import { format } from 'date-fns';
 
+const TransactionForm = ({ onResults, selectedColumns, setSelectedColumns }) => {
+  const [transactionType, setTransactionType] = useState('');
+  const [fromDate, setFromDate] = useState(new Date());
+  const [toDate, setToDate] = useState(new Date());
+  const [showCount, setShowCount] = useState(false);
+  
+  const { refetch: fetchTransactions } = useQuery(GET_TRANSACTIONS, {
+    skip: true,
+  });
+  
+  const { refetch: fetchTransactionCount } = useQuery(GET_TRANSACTION_COUNT, {
+    skip: true,
+  });
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    
+    try {
+      // Format dates to match Oracle expected format (YYYY-MM-DD HH24:MI:SS)
+      const fromDateStr = format(fromDate, "yyyy-MM-dd HH:mm:ss");
+      const toDateStr = format(toDate, "yyyy-MM-dd HH:mm:ss");
+      
+      const transactionsResponse = await fetchTransactions({
+        transactionType: transactionType || undefined,
+        fromDate: fromDateStr,
+        toDate: toDateStr,
+      });
+      
+      const countResponse = showCount ? await fetchTransactionCount({
+        transactionType: transactionType || undefined,
+        fromDate: fromDateStr,
+        toDate: toDateStr,
+      }) : { data: null };
+      
+      onResults({
+        transactions: transactionsResponse.data.transactions,
+        count: countResponse.data?.transactionCount,
+      });
+    } catch (error) {
+      console.error("Error fetching data:", error);
+    }
+  };
+
+  // ... rest of the component remains the same ...
+
+  return (
+    <LocalizationProvider dateAdapter={AdapterDateFns}>
+      <Paper style={{ padding: '20px', marginBottom: '20px' }}>
+        <form onSubmit={handleSubmit}>
+          <Grid container spacing={3}>
+            {/* Other form fields remain the same */}
+            
+            <Grid item xs={12} sm={3}>
+              <DateTimePicker
+                label="From Date"
+                value={fromDate}
+                onChange={setFromDate}
+                format="yyyy-MM-dd HH:mm:ss"
+                ampm={false}
+                slotProps={{ textField: { fullWidth: true, variant: 'outlined' } }}
+              />
+            </Grid>
+            
+            <Grid item xs={12} sm={3}>
+              <DateTimePicker
+                label="To Date"
+                value={toDate}
+                onChange={setToDate}
+                format="yyyy-MM-dd HH:mm:ss"
+                ampm={false}
+                slotProps={{ textField: { fullWidth: true, variant: 'outlined' } }}
+              />
+            </Grid>
+            
+            {/* Rest of the form remains the same */}
+          </Grid>
+        </form>
+      </Paper>
+    </LocalizationProvider>
+  );
+};
+
+export default TransactionForm;
