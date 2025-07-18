@@ -1,104 +1,224 @@
 import React, { useState } from 'react';
-import { useQuery } from '@apollo/client';
+import { useLazyQuery } from '@apollo/client';
 import { GET_TRANSACTIONS, GET_TRANSACTION_COUNT } from '../graphql/queries';
-import { 
-  TextField, 
-  Button, 
-  FormControl, 
-  InputLabel, 
-  Select, 
-  MenuItem, 
-  Checkbox, 
-  ListItemText, 
-  Grid, 
-  Paper,
-  Typography
+import { formatToISO, getDurationInHours } from '../utils/dateUtils';
+import {
+  Box,
+  Button,
+  FormControl,
+  InputLabel,
+  MenuItem,
+  Select,
+  Typography,
+  Alert,
+  Collapse,
+  IconButton
 } from '@mui/material';
 import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
-import { format } from 'date-fns';
+import CloseIcon from '@mui/icons-material/Close';
 
-const TransactionForm = ({ onResults, selectedColumns, setSelectedColumns }) => {
+const TransactionForm = ({ onDataLoaded, onCountLoaded }) => {
   const [transactionType, setTransactionType] = useState('');
-  const [fromDate, setFromDate] = useState(new Date());
-  const [toDate, setToDate] = useState(new Date());
-  const [showCount, setShowCount] = useState(false);
-  
-  const { refetch: fetchTransactions } = useQuery(GET_TRANSACTIONS, {
-    skip: true,
+  const [fromDate, setFromDate] = useState(null);
+  const [toDate, setToDate] = useState(null);
+  const [errors, setErrors] = useState({
+    dateRange: '',
+    maxDuration: ''
   });
   
-  const { refetch: fetchTransactionCount } = useQuery(GET_TRANSACTION_COUNT, {
-    skip: true,
-  });
+  const [getTransactions, { loading: transactionsLoading }] = useLazyQuery(
+    GET_TRANSACTIONS,
+    {
+      onCompleted: (data) => onDataLoaded(data.transactions),
+    }
+  );
+  
+  const [getTransactionCount, { loading: countLoading }] = useLazyQuery(
+    GET_TRANSACTION_COUNT,
+    {
+      onCompleted: (data) => onCountLoaded(data.transactionCount),
+    }
+  );
 
-  const handleSubmit = async (e) => {
+  const validateDates = () => {
+    const newErrors = {
+      dateRange: '',
+      maxDuration: ''
+    };
+    let isValid = true;
+
+    if (fromDate && toDate) {
+      // Check if fromDate is after toDate
+      if (fromDate > toDate) {
+        newErrors.dateRange = 'From date/time cannot be after To date/time';
+        isValid = false;
+      }
+
+      // Check if duration exceeds 1 hour
+      const durationHours = getDurationInHours(fromDate, toDate);
+      if (durationHours > 1) {
+        newErrors.maxDuration = 'Maximum duration between dates is 1 hour';
+        isValid = false;
+      }
+    }
+
+    setErrors(newErrors);
+    return isValid;
+  };
+
+  const handleSubmit = (e) => {
     e.preventDefault();
     
-    try {
-      // Format dates to match Oracle expected format (YYYY-MM-DD HH24:MI:SS)
-      const fromDateStr = format(fromDate, "yyyy-MM-dd HH:mm:ss");
-      const toDateStr = format(toDate, "yyyy-MM-dd HH:mm:ss");
-      
-      const transactionsResponse = await fetchTransactions({
-        transactionType: transactionType || undefined,
-        fromDate: fromDateStr,
-        toDate: toDateStr,
+    if (!fromDate || !toDate) {
+      setErrors({
+        ...errors,
+        dateRange: 'Both date/time fields are required'
       });
-      
-      const countResponse = showCount ? await fetchTransactionCount({
-        transactionType: transactionType || undefined,
-        fromDate: fromDateStr,
-        toDate: toDateStr,
-      }) : { data: null };
-      
-      onResults({
-        transactions: transactionsResponse.data.transactions,
-        count: countResponse.data?.transactionCount,
+      return;
+    }
+
+    if (!validateDates()) {
+      return;
+    }
+    
+    const variables = {
+      transactionType: transactionType || null,
+      fromDate: formatToISO(fromDate),
+      toDate: formatToISO(toDate),
+    };
+    
+    getTransactions({ variables });
+    getTransactionCount({ variables });
+  };
+
+  const handleDateChange = (date, field) => {
+    if (field === 'from') {
+      setFromDate(date);
+    } else {
+      setToDate(date);
+    }
+    
+    // Clear errors when dates change
+    if (errors.dateRange || errors.maxDuration) {
+      setErrors({
+        dateRange: '',
+        maxDuration: ''
       });
-    } catch (error) {
-      console.error("Error fetching data:", error);
     }
   };
 
-  // ... rest of the component remains the same ...
-
   return (
-    <LocalizationProvider dateAdapter={AdapterDateFns}>
-      <Paper style={{ padding: '20px', marginBottom: '20px' }}>
-        <form onSubmit={handleSubmit}>
-          <Grid container spacing={3}>
-            {/* Other form fields remain the same */}
-            
-            <Grid item xs={12} sm={3}>
-              <DateTimePicker
-                label="From Date"
-                value={fromDate}
-                onChange={setFromDate}
-                format="yyyy-MM-dd HH:mm:ss"
-                ampm={false}
-                slotProps={{ textField: { fullWidth: true, variant: 'outlined' } }}
-              />
-            </Grid>
-            
-            <Grid item xs={12} sm={3}>
-              <DateTimePicker
-                label="To Date"
-                value={toDate}
-                onChange={setToDate}
-                format="yyyy-MM-dd HH:mm:ss"
-                ampm={false}
-                slotProps={{ textField: { fullWidth: true, variant: 'outlined' } }}
-              />
-            </Grid>
-            
-            {/* Rest of the form remains the same */}
-          </Grid>
-        </form>
-      </Paper>
-    </LocalizationProvider>
+    <Box component="form" onSubmit={handleSubmit} sx={{ mb: 4 }}>
+      <Typography variant="h5" gutterBottom>
+        Transaction Query
+      </Typography>
+      
+      <FormControl fullWidth sx={{ mb: 2 }}>
+        <InputLabel id="transaction-type-label">Transaction Type</InputLabel>
+        <Select
+          labelId="transaction-type-label"
+          value={transactionType}
+          label="Transaction Type"
+          onChange={(e) => setTransactionType(e.target.value)}
+        >
+          <MenuItem value="">All Types</MenuItem>
+          <MenuItem value="DEPOSIT">Deposit</MenuItem>
+          <MenuItem value="WITHDRAWAL">Withdrawal</MenuItem>
+          <MenuItem value="TRANSFER">Transfer</MenuItem>
+          <MenuItem value="PAYMENT">Payment</MenuItem>
+        </Select>
+      </FormControl>
+      
+      <LocalizationProvider dateAdapter={AdapterDateFns}>
+        <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+          <DateTimePicker
+            label="From Date & Time"
+            value={fromDate}
+            onChange={(date) => handleDateChange(date, 'from')}
+            slotProps={{ textField: { fullWidth: true } }}
+            ampm={false}
+            format="yyyy-MM-dd HH:mm:ss"
+            views={['year', 'month', 'day', 'hours', 'minutes', 'seconds']}
+          />
+          <DateTimePicker
+            label="To Date & Time"
+            value={toDate}
+            onChange={(date) => handleDateChange(date, 'to')}
+            slotProps={{ textField: { fullWidth: true } }}
+            ampm={false}
+            format="yyyy-MM-dd HH:mm:ss"
+            views={['year', 'month', 'day', 'hours', 'minutes', 'seconds']}
+          />
+        </Box>
+      </LocalizationProvider>
+
+      {/* Error messages */}
+      <Collapse in={!!errors.dateRange}>
+        <Alert
+          severity="error"
+          action={
+            <IconButton
+              aria-label="close"
+              color="inherit"
+              size="small"
+              onClick={() => setErrors({...errors, dateRange: ''})}
+            >
+              <CloseIcon fontSize="inherit" />
+            </IconButton>
+          }
+          sx={{ mb: 2 }}
+        >
+          {errors.dateRange}
+        </Alert>
+      </Collapse>
+
+      <Collapse in={!!errors.maxDuration}>
+        <Alert
+          severity="error"
+          action={
+            <IconButton
+              aria-label="close"
+              color="inherit"
+              size="small"
+              onClick={() => setErrors({...errors, maxDuration: ''})}
+            >
+              <CloseIcon fontSize="inherit" />
+            </IconButton>
+          }
+          sx={{ mb: 2 }}
+        >
+          {errors.maxDuration}
+        </Alert>
+      </Collapse>
+      
+      <Button
+        type="submit"
+        variant="contained"
+        disabled={transactionsLoading || countLoading || !fromDate || !toDate}
+      >
+        {transactionsLoading || countLoading ? 'Loading...' : 'Query Transactions'}
+      </Button>
+    </Box>
   );
 };
 
 export default TransactionForm;
+
+
+import { format, parseISO, differenceInHours, differenceInMinutes } from 'date-fns';
+
+export const formatToISO = (date) => {
+  return date.toISOString();
+};
+
+export const formatDateForDisplay = (dateString) => {
+  return format(parseISO(dateString), 'yyyy-MM-dd HH:mm:ss');
+};
+
+export const getDurationInHours = (startDate, endDate) => {
+  const hours = differenceInHours(endDate, startDate);
+  const minutes = differenceInMinutes(endDate, startDate) % 60;
+  return hours + (minutes / 60);
+};
