@@ -1,8 +1,1 @@
-SELECT
-  avg(requests_per_min) AS avg_rpm,
-  hour(@timestamp) AS hour_of_day
-FROM metrics
-WHERE metric.name = 'requests_per_min'
-  AND @timestamp >= now() - 30d
-GROUP BY hour_of_day
-ORDER BY avg_rpm ASC
+
