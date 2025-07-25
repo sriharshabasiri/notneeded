@@ -1,10 +1,8 @@
-SELECT 
-  date_trunc('hour', @timestamp) as hour_of_day,
-  avg(`requests.per.minute`) as avg_requests,
-  percentile(`requests.per.minute`, 5) as p5_requests
-FROM logs
-WHERE service:"your-service-name" 
-  AND @timestamp > now() - 30d
+SELECT
+  avg(requests_per_min) AS avg_rpm,
+  hour(@timestamp) AS hour_of_day
+FROM metrics
+WHERE metric.name = 'requests_per_min'
+  AND @timestamp >= now() - 30d
 GROUP BY hour_of_day
-ORDER BY avg_requests ASC
-LIMIT 10
+ORDER BY avg_rpm ASC
