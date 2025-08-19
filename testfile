@@ -1,1 +1,172 @@
+@RestController
+@RequestMapping("/api/performance")
+public class PerformanceExportController {
 
+    @Autowired
+    private PerformanceComparisonService performanceService;
+
+    @GetMapping(value = "/export/csv", produces = "text/csv")
+    public ResponseEntity<Resource> exportToCsv(
+            @RequestParam(required = false) String currentRunNo,
+            @RequestParam(defaultValue = "1") int baselineRank) throws IOException {
+        
+        List<RunComparisonDTO> results = performanceService.getAllResultsForExport(currentRunNo, baselineRank);
+        
+        // Create CSV content
+        String csvContent = convertToCsv(results);
+        
+        // Create a resource from the CSV content
+        ByteArrayResource resource = new ByteArrayResource(csvContent.getBytes(StandardCharsets.UTF_8));
+        
+        // Set filename with timestamp
+        String filename = "performance-comparison-" + LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME) + ".csv";
+        
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .contentType(MediaType.parseMediaType("text/csv"))
+                .contentLength(resource.contentLength())
+                .body(resource);
+    }
+
+    private String convertToCsv(List<RunComparisonDTO> results) {
+        StringBuilder csvOutput = new StringBuilder();
+        
+        // Add header row
+        csvOutput.append("Baseline Run No,Baseline Date,Baseline Description,Baseline Avg Resp Time (ms),")
+                .append("Current Run No,Use Case,Current Avg Resp Time (ms),Executions Count,Distinct Inputs Count,")
+                .append("Success Count,Fail Count,Timeout Count,Fail Percentage,Min Response,Max Response,Deviation Percentage")
+                .append("\n");
+        
+        // Add data rows
+        for (RunComparisonDTO dto : results) {
+            csvOutput.append(escapeCsvField(dto.getBaselineRunNo())).append(",")
+                    .append(escapeCsvField(dto.getBaselineDate())).append(",")
+                    .append(escapeCsvField(dto.getBaselineDescription())).append(",")
+                    .append(dto.getBaselineAvgRespTime()).append(",")
+                    .append(escapeCsvField(dto.getCurrentRunNo())).append(",")
+                    .append(escapeCsvField(dto.getUseCase())).append(",")
+                    .append(dto.getCurrentAvgRespTime()).append(",")
+                    .append(escapeCsvField(dto.getExecutionsCount())).append(",")
+                    .append(escapeCsvField(dto.getDistinctInputsCount())).append(",")
+                    .append(escapeCsvField(dto.getSuccessCount())).append(",")
+                    .append(escapeCsvField(dto.getFailCount())).append(",")
+                    .append(escapeCsvField(dto.getTimeoutCount())).append(",")
+                    .append(escapeCsvField(dto.getFailPercentage())).append(",")
+                    .append(escapeCsvField(dto.getMinResponse())).append(",")
+                    .append(escapeCsvField(dto.getMaxResponse())).append(",")
+                    .append(dto.getDeviationPercentage())
+                    .append("\n");
+        }
+        
+        return csvOutput.toString();
+    }
+
+    private String escapeCsvField(String field) {
+        if (field == null) {
+            return "";
+        }
+        // Escape quotes and wrap in quotes if contains comma or newline
+        if (field.contains("\"") || field.contains(",") || field.contains("\n")) {
+            return "\"" + field.replace("\"", "\"\"") + "\"";
+        }
+        return field;
+    }
+}
+
+
+
+@Service
+public class PerformanceComparisonService {
+    
+    @Autowired
+    private ExecutionRepository executionRepository;
+    
+    // Existing paginated method
+    public Page<RunComparisonDTO> getRunComparison(String currentRunNo, int baselineRank, Pageable pageable) {
+        // Your existing paginated implementation
+    }
+    
+    // New method for CSV export (without pagination)
+    public List<RunComparisonDTO> getAllResultsForExport(String currentRunNo, int baselineRank) {
+        return executionRepository.compareRunsNative(currentRunNo, baselineRank).stream()
+                .map(this::mapToDTO)
+                .collect(Collectors.toList());
+    }
+    
+    // Existing mapping method
+    private RunComparisonDTO mapToDTO(Object[] result) {
+        // Your existing implementation
+    }
+}
+
+import React from 'react';
+import { Button } from '@mui/material'; // or your preferred UI library
+import { saveAs } from 'file-saver'; // Install with: npm install file-saver
+
+const ExportButton = ({ currentRunNo, baselineRank }) => {
+    const handleExport = async () => {
+        try {
+            // Add query parameters
+            const params = new URLSearchParams();
+            if (currentRunNo) params.append('currentRunNo', currentRunNo);
+            params.append('baselineRank', baselineRank);
+            
+            const response = await fetch(`/api/performance/export/csv?${params.toString()}`);
+            
+            if (!response.ok) {
+                throw new Error('Export failed');
+            }
+            
+            // Get filename from content-disposition header
+            const contentDisposition = response.headers.get('content-disposition');
+            let filename = 'performance-export.csv';
+            if (contentDisposition) {
+                const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
+                if (filenameMatch && filenameMatch[1]) {
+                    filename = filenameMatch[1];
+                }
+            }
+            
+            // Save the file
+            const blob = await response.blob();
+            saveAs(blob, filename);
+            
+        } catch (error) {
+            console.error('Export error:', error);
+            alert('Failed to export data. Please try again.');
+        }
+    };
+
+    return (
+        <Button 
+            variant="contained" 
+            color="primary"
+            onClick={handleExport}
+            startIcon={<DownloadIcon />}
+        >
+            Export to CSV
+        </Button>
+    );
+};
+
+export default ExportButton;
+
+
+import ExportButton from './ExportButton';
+
+const PerformanceComparisonPage = () => {
+    const [currentRunNo, setCurrentRunNo] = useState(null);
+    const [baselineRank, setBaselineRank] = useState(1);
+    
+    return (
+        <div>
+            {/* Your existing filters and table */}
+            <div style={{ marginTop: '20px', textAlign: 'right' }}>
+                <ExportButton 
+                    currentRunNo={currentRunNo}
+                    baselineRank={baselineRank}
+                />
+            </div>
+        </div>
+    );
+};
