@@ -1,1 +1,77 @@
+#!/bin/bash
 
+# Script: find_777_perms.sh
+# Description: Scans specified partitions for files and directories with 777 permissions.
+# Usage: sudo ./find_777_perms.sh
+
+# Define the partitions to scan. Adjust this array based on your server's layout.
+# Use 'df -h' to see your active partitions.
+PARTITIONS=("/" "/home" "/var" "/opt" "/tmp" "/apps") # Add/remove partitions as needed
+
+# Output file to save the results
+OUTPUT_FILE="/tmp/777_permissions_scan_$(date +%Y%m%d_%H%M%S).log"
+
+# Header for the output
+echo "=== SCAN FOR FILES/DIRECTORIES WITH 777 PERMISSIONS ===" | tee "$OUTPUT_FILE"
+echo "Start Time: $(date)" | tee -a "$OUTPUT_FILE"
+echo "Scanned Partitions: ${PARTITIONS[*]}" | tee -a "$OUTPUT_FILE"
+echo "----------------------------------------" | tee -a "$OUTPUT_FILE"
+
+# Function to check if a partition is mounted
+is_mounted() {
+    local partition="$1"
+    grep -q " $partition " /proc/mounts
+}
+
+# Loop through each partition defined in the array
+for partition in "${PARTITIONS[@]}"; do
+    echo "[INFO] Scanning partition: $partition" | tee -a "$OUTPUT_FILE"
+
+    # Check if the partition is mounted before scanning
+    if ! is_mounted "$partition"; then
+        echo "  -> WARNING: Partition $partition is not mounted. Skipping." | tee -a "$OUTPUT_FILE"
+        continue
+    fi
+
+    # Use the 'find' command to locate items with 777 permissions.
+    # -type f = files, -type d = directories
+    # -perm 777 = exact permission match
+    # 2>/dev/null = redirects all errors (e.g., permission denied, no such file) to null
+    echo "  -> Files with 777 permissions:" | tee -a "$OUTPUT_FILE"
+    find "$partition" -xdev -type f -perm 777 -ls 2>/dev/null | tee -a "$OUTPUT_FILE"
+
+    echo "  -> Directories with 777 permissions:" | tee -a "$OUTPUT_FILE"
+    find "$partition" -xdev -type d -perm 777 -ls 2>/dev/null | tee -a "$OUTPUT_FILE"
+
+    echo "----------------------------------------" | tee -a "$OUTPUT_FILE"
+done
+
+echo "Scan completed. Detailed results saved to: $OUTPUT_FILE" | tee -a "$OUTPUT_FILE"
+echo "End Time: $(date)" | tee -a "$OUTPUT_FILE"
+
+
+
+
+#!/bin/bash
+
+# List of partitions you want to scan
+# Example: / /home /var /opt
+PARTITIONS=("/" "/home" "/var" "/opt")
+
+echo "Scanning for files and directories with 777 permissions..."
+echo "=========================================================="
+
+for partition in "${PARTITIONS[@]}"; do
+    echo -e "\nChecking partition: $partition"
+    echo "----------------------------------------------------------"
+
+    # Find directories with 777 permissions
+    echo "Directories with 777:"
+    find "$partition" -xdev -type d -perm 0777 2>/dev/null
+
+    # Find files with 777 permissions
+    echo -e "\nFiles with 777:"
+    find "$partition" -xdev -type f -perm 0777 2>/dev/null
+done
+
+echo -e "\nScan complete."
