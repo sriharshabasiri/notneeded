@@ -1,30 +1,33 @@
 #!/bin/bash
 
-# Script: find_world_writable.sh
-# Description: Recursively scans partitions for world-writable files & dirs (the security risk equivalent of 777).
-# Usage: sudo ./find_world_writable.sh
+# Script: find_777_dynamic.sh
+# Description: Dynamically finds all mounted partitions and scans them for world-writable files & dirs.
+# Usage: sudo ./find_777_dynamic.sh
 
-PARTITIONS=("/" "/home" "/var" "/opt" "/tmp") # Add/remove partitions as needed
-OUTPUT_FILE="/tmp/world_writable_scan_$(date +%Y%m%d_%H%M%S).log"
+# Output file to save the results. Includes hostname and timestamp.
+OUTPUT_FILE="/tmp/world_writable_scan_$(hostname)_$(date +%Y%m%d_%H%M%S).log"
 
-echo "=== SCAN FOR WORLD-WRITABLE FILES & DIRECTORIES ===" | tee "$OUTPUT_FILE"
-echo "Note: Finds items with permission 'rwxrwxrwx' AND special bits like 'rws' or 'rwt'." | tee -a "$OUTPUT_FILE"
-echo "Scanned Partitions: ${PARTITIONS[*]}" | tee -a "$OUTPUT_FILE"
+# Header for the output
+echo "=== DYNAMIC SCAN FOR WORLD-WRITABLE FILES & DIRECTORIES ===" | tee "$OUTPUT_FILE"
+echo "Hostname: $(hostname)" | tee -a "$OUTPUT_FILE"
 echo "Start Time: $(date)" | tee -a "$OUTPUT_FILE"
 echo "================================================================" | tee -a "$OUTPUT_FILE"
 
-for partition in "${PARTITIONS[@]}"; do
-    echo "[SCANNING: $partition]" | tee -a "$OUTPUT_FILE"
+# Get mounted partitions from /proc/mounts
+echo "[INFO] Discovering mounted partitions from /proc/mounts..." | tee -a "$OUTPUT_FILE"
+mapfile -t PARTITIONS < <(awk '$1 !~ /(tmpfs|proc|devtmpfs|sysfs|devpts|securityfs|pstore|cgroup|binfmt_misc|hugetlbfs|mqueue|debugfs|tracefs|fuse\.|overlay|sunrpc)/ {print $2}' /proc/mounts | sort -u)
 
-    if ! grep -q " $partition " /proc/mounts; then
-        echo "  -> SKIPPING: $partition is not mounted." | tee -a "$OUTPUT_FILE"
-        echo "----------------------------------------------------------------" | tee -a "$OUTPUT_FILE"
+echo "Found partitions to scan: ${PARTITIONS[*]}" | tee -a "$OUTPUT_FILE"
+echo "================================================================" | tee -a "$OUTPUT_FILE"
+
+# Loop through each dynamically found partition
+for partition in "${PARTITIONS[@]}"; do
+    if [[ -z "$partition" || "$partition" == "rootfs" ]]; then
         continue
     fi
 
-    # The CORRECT way to find the security risk, not the exact number.
-    # -perm /u=g=o=rwx : Find items where USER, GROUP, and OTHERS have all 3 permissions (rwx).
-    # This matches 777, 1777, 2777, 3777, 4777, etc.
+    echo "[SCANNING: $partition]" | tee -a "$OUTPUT_FILE"
+
     echo "FILES:" | tee -a "$OUTPUT_FILE"
     find "$partition" -xdev -type f -perm -u=rwx,g=rwx,o=rwx -ls 2>/dev/null | tee -a "$OUTPUT_FILE"
     echo "" | tee -a "$OUTPUT_FILE"
@@ -35,5 +38,5 @@ for partition in "${PARTITIONS[@]}"; do
     echo "================================================================" | tee -a "$OUTPUT_FILE"
 done
 
-echo "Scan completed. Full results saved to: $OUTPUT_FILE" | tee -a "$OUTPUT_FILE"
+echo "Scan completed. Detailed results saved to: $OUTPUT_FILE" | tee -a "$OUTPUT_FILE"
 echo "End Time: $(date)" | tee -a "$OUTPUT_FILE"
