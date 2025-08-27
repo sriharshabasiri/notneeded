@@ -1,1 +1,39 @@
+#!/bin/bash
 
+# Script: find_world_writable.sh
+# Description: Recursively scans partitions for world-writable files & dirs (the security risk equivalent of 777).
+# Usage: sudo ./find_world_writable.sh
+
+PARTITIONS=("/" "/home" "/var" "/opt" "/tmp") # Add/remove partitions as needed
+OUTPUT_FILE="/tmp/world_writable_scan_$(date +%Y%m%d_%H%M%S).log"
+
+echo "=== SCAN FOR WORLD-WRITABLE FILES & DIRECTORIES ===" | tee "$OUTPUT_FILE"
+echo "Note: Finds items with permission 'rwxrwxrwx' AND special bits like 'rws' or 'rwt'." | tee -a "$OUTPUT_FILE"
+echo "Scanned Partitions: ${PARTITIONS[*]}" | tee -a "$OUTPUT_FILE"
+echo "Start Time: $(date)" | tee -a "$OUTPUT_FILE"
+echo "================================================================" | tee -a "$OUTPUT_FILE"
+
+for partition in "${PARTITIONS[@]}"; do
+    echo "[SCANNING: $partition]" | tee -a "$OUTPUT_FILE"
+
+    if ! grep -q " $partition " /proc/mounts; then
+        echo "  -> SKIPPING: $partition is not mounted." | tee -a "$OUTPUT_FILE"
+        echo "----------------------------------------------------------------" | tee -a "$OUTPUT_FILE"
+        continue
+    fi
+
+    # The CORRECT way to find the security risk, not the exact number.
+    # -perm /u=g=o=rwx : Find items where USER, GROUP, and OTHERS have all 3 permissions (rwx).
+    # This matches 777, 1777, 2777, 3777, 4777, etc.
+    echo "FILES:" | tee -a "$OUTPUT_FILE"
+    find "$partition" -xdev -type f -perm -u=rwx,g=rwx,o=rwx -ls 2>/dev/null | tee -a "$OUTPUT_FILE"
+    echo "" | tee -a "$OUTPUT_FILE"
+
+    echo "DIRECTORIES:" | tee -a "$OUTPUT_FILE"
+    find "$partition" -xdev -type d -perm -u=rwx,g=rwx,o=rwx -ls 2>/dev/null | tee -a "$OUTPUT_FILE"
+
+    echo "================================================================" | tee -a "$OUTPUT_FILE"
+done
+
+echo "Scan completed. Full results saved to: $OUTPUT_FILE" | tee -a "$OUTPUT_FILE"
+echo "End Time: $(date)" | tee -a "$OUTPUT_FILE"
