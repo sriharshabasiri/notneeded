@@ -1,1 +1,23 @@
-
+.oauth2Login(oauth2 -> oauth2
+    .successHandler((request, response, authentication) -> {
+        // Generate JWT token from the authenticated user
+        OAuth2User oauth2User = (OAuth2User) authentication.getPrincipal();
+        
+        // Create UserDetails from OAuth2User
+        UserDetails userDetails = org.springframework.security.core.userdetails.User
+            .withUsername(oauth2User.getAttribute("email"))
+            .password("") // No password for OAuth users
+            .authorities(oauth2User.getAuthorities())
+            .build();
+        
+        // Generate JWT token
+        String token = jwtTokenUtil.generateToken(userDetails);
+        
+        // Redirect to React with the token
+        response.sendRedirect("http://localhost:3000/login/callback?token=" + token);
+    })
+    .failureHandler((request, response, exception) -> {
+        // Redirect to React with error
+        response.sendRedirect("http://localhost:3000/login?error=auth_failed");
+    })
+)
