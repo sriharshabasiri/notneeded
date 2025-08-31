@@ -1,1 +1,16 @@
-
+    if (typeof params === 'string' && params.includes('=')) {
+      // If it's already a query string, add it directly
+      const searchParams = new URLSearchParams(params);
+      for (const [key, value] of searchParams.entries()) {
+        url.searchParams.append(key, value);
+      }
+    } else if (typeof params === 'object' && params !== null) {
+      // Properly handle the params object
+      Object.keys(params).forEach(key => {
+        const value = params[key];
+        if (value !== undefined && value !== null) {
+          // Add each parameter individually
+          url.searchParams.append(key, value);
+        }
+      });
+    }
