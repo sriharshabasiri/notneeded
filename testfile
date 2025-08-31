@@ -1,1 +1,227 @@
+import React, { useState } from 'react';
 
+// Corrected API service implementation
+const ApiService = {
+  async request(endpoint, options = {}, params = {}) {
+    // Build the complete URL with properly encoded parameters
+    const url = this.buildUrl(endpoint, params);
+    console.log('Final URL:', url);
+    
+    // In a real implementation, this would be an actual API call using fetch
+    try {
+      const response = await fetch(url, {
+        method: options.method || 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers,
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      return {
+        status: response.status,
+        data: data,
+        url: url
+      };
+    } catch (error) {
+      console.error('API request failed:', error);
+      throw error;
+    }
+  },
+
+  buildUrl(endpoint, params = {}) {
+    const baseUrl = 'http://localhost:8080/api';
+    const url = new URL(`${baseUrl}${endpoint}`);
+    
+    // Properly handle the params object
+    Object.keys(params).forEach(key => {
+      const value = params[key];
+      if (value !== undefined && value !== null) {
+        // Handle arrays and objects if needed
+        if (Array.isArray(value)) {
+          value.forEach(item => url.searchParams.append(key, item));
+        } else if (typeof value === 'object') {
+          // If you need to send complex objects, you might stringify them
+          url.searchParams.append(key, JSON.stringify(value));
+        } else {
+          url.searchParams.append(key, value);
+        }
+      }
+    });
+    
+    return url.toString();
+  },
+
+  async get(endpoint, options = {}) {
+    // Extract params from options and pass them correctly
+    const { params, ...otherOptions } = options;
+    return this.request(endpoint, { method: 'GET', ...otherOptions }, params);
+  }
+};
+
+// Performance Reports Component
+const PerformanceReports = () => {
+  const [month, setMonth] = useState('August 2025');
+  const [response, setResponse] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const fetchPerformanceReport = async () => {
+    setLoading(true);
+    setResponse(null);
+    setError(null);
+    
+    try {
+      const result = await ApiService.get('/performance/runmonth', {
+        params: { month }  // This will be properly handled now
+      });
+      
+      setResponse(result);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto', fontFamily: 'Arial, sans-serif' }}>
+      <h2 style={{ color: '#333' }}>Performance Reports</h2>
+      
+      <div style={{ marginBottom: '20px', padding: '15px', backgroundColor: '#f0f7ff', borderRadius: '5px', border: '1px solid #cce5ff' }}>
+        <h3 style={{ marginTop: 0 }}>API Call Information</h3>
+        <p>Endpoint: <code>/performance/runmonth</code></p>
+        <p>Expected URL: <code>http://localhost:8080/api/performance/runmonth?month=August+2025</code></p>
+      </div>
+      
+      <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+        <div>
+          <label htmlFor="monthInput" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+            Month Parameter:
+          </label>
+          <input
+            id="monthInput"
+            type="text"
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+            style={{ padding: '8px', width: '200px', border: '1px solid #ccc', borderRadius: '4px' }}
+            placeholder="Enter month value"
+          />
+        </div>
+        
+        <button 
+          onClick={fetchPerformanceReport}
+          disabled={loading}
+          style={{
+            padding: '8px 16px',
+            backgroundColor: loading ? '#ccc' : '#4CAF50',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: loading ? 'not-allowed' : 'pointer',
+            alignSelf: 'flex-end'
+          }}
+        >
+          {loading ? 'Calling API...' : 'Call API'}
+        </button>
+      </div>
+      
+      {loading && (
+        <div style={{ padding: '10px', textAlign: 'center' }}>
+          <div style={{ display: 'inline-block', width: '20px', height: '20px', border: '3px solid #f3f3f3', borderTop: '3px solid #3498db', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
+          <style>
+            {`
+              @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+              }
+            `}
+          </style>
+        </div>
+      )}
+      
+      {error && (
+        <div style={{
+          marginTop: '20px',
+          padding: '15px',
+          backgroundColor: '#ffebee',
+          border: '1px solid #f44336',
+          borderRadius: '5px',
+          color: '#d32f2f'
+        }}>
+          <h3 style={{ marginTop: 0 }}>Error</h3>
+          <p>{error}</p>
+        </div>
+      )}
+      
+      {response && (
+        <div style={{
+          marginTop: '20px',
+          padding: '15px',
+          backgroundColor: '#e8f5e9',
+          border: '1px solid #4CAF50',
+          borderRadius: '5px'
+        }}>
+          <h3 style={{ marginTop: 0 }}>API Response</h3>
+          <p><strong>Status:</strong> {response.status}</p>
+          <p><strong>URL Called:</strong> <code>{response.url}</code></p>
+          
+          <div style={{ marginTop: '10px' }}>
+            <strong>Response Data:</strong>
+            <pre style={{
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-all',
+              backgroundColor: '#fff',
+              padding: '10px',
+              borderRadius: '4px',
+              overflowX: 'auto',
+              border: '1px solid #ddd'
+            }}>
+              {JSON.stringify(response.data, null, 2)}
+            </pre>
+          </div>
+        </div>
+      )}
+      
+      <div style={{ marginTop: '30px', padding: '15px', backgroundColor: '#fff3e0', borderRadius: '5px', border: '1px solid #ffb74d' }}>
+        <h3 style={{ marginTop: 0 }}>How the Fix Works</h3>
+        <p>The key changes made to the API service:</p>
+        <ol>
+          <li><strong>Proper parameter handling:</strong> The <code>get</code> method now correctly extracts <code>params</code> from options</li>
+          <li><strong>URL construction:</strong> Using <code>URL</code> and <code>URLSearchParams</code> APIs for proper encoding</li>
+          <li><strong>Parameter serialization:</strong> Each parameter is properly appended to the URL search parameters</li>
+        </ol>
+        
+        <p>Before the fix, your code was likely doing something like:</p>
+        <pre style={{ backgroundColor: '#f5f5f5', padding: '10px', borderRadius: '4px' }}>
+{`// Incorrect - passing the params object as a string
+const url = endpoint + '?params=' + encodeURIComponent(JSON.stringify(params));`}
+        </pre>
+        
+        <p>After the fix, the code now correctly:</p>
+        <pre style={{ backgroundColor: '#f5f5f5', padding: '10px', borderRadius: '4px' }}>
+{`// Correct - properly serializing each parameter
+const url = new URL(endpoint, baseUrl);
+Object.keys(params).forEach(key => {
+  url.searchParams.append(key, params[key]);
+});`}
+        </pre>
+      </div>
+    </div>
+  );
+};
+
+// Main App Component
+const App = () => {
+  return (
+    <div>
+      <PerformanceReports />
+    </div>
+  );
+};
+
+export default App;
