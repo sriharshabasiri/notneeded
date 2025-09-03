@@ -1,1 +1,25 @@
+This chart uses two Y-axes, which is perfect for plotting two different units of measurement (like seconds and percent) against the same time axis.
 
+X-Axis (Horizontal): Time (The month/year of the batch run).
+
+Example Labels: Jan 2024, Feb 2024, Mar 2024, etc.
+
+Left Y-Axis: Metrics in their native units (Seconds for Total Time, Records/Second for Throughput).
+
+This axis will have two line series:
+
+Baseline Total Time (a flat, horizontal line)
+
+Actual Total Time (a line that goes up and down)
+
+And/or two more line series:
+3. Baseline Throughput (a flat, horizontal line)
+4. Actual Throughput (a line that goes up and down)
+
+Right Y-Axis: Deviation Percentage (%).
+
+This axis will have one or two line series:
+
+Throughput Deviation % ((Current - Baseline) / Baseline * 100)
+
+(Optional) Total Time Deviation %
