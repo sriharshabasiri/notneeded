@@ -1,1 +1,24 @@
+#!/bin/bash
+FRONTEND_DIR=~/app/frontend
+LOG_FILE=~/app/logs/frontend.log
+PORT=3000
 
+echo "Starting React frontend on port $PORT..."
+
+# Kill any existing process on the same port
+pkill -f "http-server.*$PORT" || true
+pkill -f "serve.*$PORT" || true
+
+# Create logs directory if it doesn't exist
+mkdir -p ~/app/logs
+
+# Start http-server
+cd $FRONTEND_DIR
+nohup http-server -p $PORT -a 0.0.0.0 --cors > $LOG_FILE 2>&1 &
+
+# Alternative using serve:
+# nohup serve -s . -l $PORT > $LOG_FILE 2>&1 &
+
+echo "Frontend started! PID: $!"
+echo "Logs: tail -f $LOG_FILE"
+echo "Access: http://your-server-ip:$PORT"
