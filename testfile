@@ -1,1 +1,21 @@
+cat > ~/app/start-backend.sh << 'EOF'
+#!/bin/bash
+APP_HOME=~/app/backend
+JAR_FILE=$(ls ~/app/backend/*.jar | head -1)
+JAR_NAME=$(basename "$JAR_FILE")
+LOG_FILE=~/app/logs/backend.log
 
+echo "Starting backend with JAR: $JAR_NAME"
+
+# Kill existing process if running
+pkill -f "java -jar.*$JAR_NAME" || true
+
+# Start new process
+cd $APP_HOME
+nohup java -jar "$JAR_NAME" > $LOG_FILE 2>&1 &
+
+echo "Backend started. PID: $!"
+echo "Check logs: tail -f $LOG_FILE"
+EOF
+
+chmod +x ~/app/start-backend.sh
