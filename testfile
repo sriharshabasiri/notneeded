@@ -1,5 +1,1 @@
-# On your local machine, download Node.js v20.11.0
-curl -o node-v20.11.0-linux-x64.tar.xz https://nodejs.org/dist/v20.11.0/node-v20.11.0-linux-x64.tar.xz
 
-# Or download the tar.gz version (easier to handle)
-curl -o node-v20.11.0-linux-x64.tar.gz https://nodejs.org/dist/v20.11.0/node-v20.11.0-linux-x64.tar.gz
