@@ -1,1 +1,83 @@
+Role Overview
+	•	Supported production & pre-production Finacle environments (87+ servers: 31 Dev, 56 ESQM/Perf).
+	•	Ensured platform stability, observability, automation, compliance for critical banking applications.
+	•	Contributed to multiple strategic go-lives: JBoss Upgrade, Datadog Migration, RHEL Upgrade, CRM Reset, Deposits Migration, and Server Refresh.
+
+⸻
+
+Key Outcomes
+
+✅ Operational Efficiency
+	•	Automated config updates, restarts, and DB password rotations → 80+ engineer-hours saved per quarter.
+	•	Reduced manual refresh validation effort by 70%.
+
+✅ Improved Reliability & Resilience
+	•	Enhanced monitoring dashboards (JVM topology, cert expiry, license usage, DB queries, SLA metrics).
+	•	40% MTTR reduction via proactive Datadog/AppDynamics monitoring.
+	•	Eliminated legacy scripts by consolidating into Datadog workflows.
+
+✅ Compliance & Security
+	•	Automated permissions scans, world-writable checks, CA imports, cert renewals.
+	•	Ensured environments passed security audits with minimal escalations.
+
+✅ Innovation & Growth
+	•	Introduced BNPF portal, reducing analysis/reporting from days → minutes.
+	•	PoC for Flyway DB versioning and ML anomaly detection.
+	•	Completed 2 Datadog certifications (2025) and 3 AWS certifications (2024).
+
+⸻
+
+Impact Metrics
+	•	5+ major platform initiatives supported to successful go-live.
+	•	Zero major incidents in production releases supported.
+	•	~400+ hours saved annually from automation.
+	•	Improved compliance posture across all preprod/prod regions.
+
+⸻
+
+Future Roadmap (2026)
+	•	Expand configuration-as-code across all Finacle regions.
+	•	Leverage AI/ML for predictive monitoring.
+	•	Standardize Finacle CICD pipeline (APDMAS MVP).
+	•	Build cloud migration readiness (AWS/Datadog/AAP).
+
+⸻
+
+Appendix (Technical Highlights)
+
+Infrastructure & Environment Management
+	•	Implemented RHEL, BIOS, firmware upgrades across 87+ servers.
+	•	Preprod refresh & config drift validation (row count, sequences, privileges).
+	•	Environment readiness for Deposits Migration & Server Refresh.
+
+Automation & DevOps
+	•	Ansible playbooks for JBoss config updates, restarts, XML deployments.
+	•	DB password automation using CyberArk AIM + encryption.
+	•	CICD patch deployment pipeline (APDMAS setup).
+	•	ServiceNow API integrations → automated change/vulnerability updates.
+
+Monitoring & Observability
+	•	Custom Datadog dashboards:
+	•	JVM topology, listener validation, DB monitoring for ATM/POS/Zelle.
+	•	Batch SLA via StatsD + Python parsers.
+	•	License consumption forecasting.
+	•	Automated certificate monitoring, time machine/BOD checks, LIMO validations.
+
+Resiliency & Compliance
+	•	Permissions scanning monitor across directories.
+	•	Trusted CA imports, cert renewals automation.
+	•	World-writable scan automation & corrective changes.
+
+Innovation
+	•	BNPF portal – analytics & reporting automation.
+	•	ML-based anomaly detection PoC (scikit-learn).
+	•	Flyway DB versioning PoC in Dev.
+	•	Agentic AI exploration for SRE automation.
+
+BAU Contributions
+	•	Monthly disruptive patching (Dev & ESQM).
+	•	JDK/JRE upgrades (Apache JBCS, Oracle client, Autosys).
+	•	Vulnerability remediation, patch deployments, RITMs.
+	•	Release & change call support (overnight/weekends).
+	•	JIRA sprint ceremonies for prod & preprod.
 
