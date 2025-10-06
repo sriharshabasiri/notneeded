@@ -1,1 +1,155 @@
+- name: Apply ALTER USER SQL on DB hosts (push SQL and run via sqlplus)
+  when: "'db_servers' in group_names"
 
+- name: Apply new passwords to Oracle and update JBoss config
+  hosts: jboss_servers
+  gather_facts: yes
+  vars:
+    db_users_list:
+      - corebank_read
+      - corebank_supt
+      - dfscust
+      - crmuser
+      - fimaster
+      - ssoadm
+      - fiejb
+      - intadm
+      - ceadm
+      - apdmrhel
+      - dedupadm
+      - finbatchperf
+
+  tasks:
+    - name: Load passwords.json from control node
+      slurp:
+        src: "{{ playbook_dir }}/passwords.json"
+      delegate_to: localhost
+      run_once: true
+      register: pw_json_slurp
+
+    - name: Set password map fact
+      set_fact:
+        pw_map: "{{ pw_json_slurp.content | b64decode | from_json }}"
+
+    - name: Create SQL script for ALTER USER on this env
+      copy:
+        dest: /tmp/alter_users_{{ inventory_hostname }}.sql
+        content: |
+          SET ECHO OFF
+          WHENEVER SQLERROR EXIT FAILURE
+          {% for u,p in pw_map.items() %}
+          ALTER USER {{ u }} IDENTIFIED BY "{{ p }}";
+          {% endfor %}
+          COMMIT;
+      mode: '0600'
+
+    - name: Run ALTER USER script via sqlplus
+      shell: |
+        . ~/.bash_profile || true
+        echo "Running sqlplus for {{ oracle_sid }}"
+        echo exit | sqlplus -s "{{ oracle_admin_user }}/{{ oracle_admin_pass }}@{{ oracle_sid }}" @/tmp/alter_users_{{ inventory_hostname }}.sql
+      args:
+        executable: /bin/bash
+      register: sql_result
+      failed_when: sql_result.rc != 0
+
+
+
+all:
+  vars:
+    ansible_user: jboss
+    ansible_become: true
+    ansible_become_method: sudo
+    jboss_home: /opt/jboss/v7.0
+    config_path: "{{ jboss_home }}/standalone/configuration"
+    backup_suffix: "_PPM_OCT25"
+    password_length: 12
+    password_policy:
+      special_char: "_"
+      min_numeric: 1
+      min_uppercase: 1
+      min_lowercase: 1
+    db_users:
+      - corebank_read
+      - corebank_supt
+      - dfscust
+      - crmuser
+      - fimaster
+      - ssoadm
+      - fiejb
+      - intadm
+      - ceadm
+      - apdmrhel
+      - dedupadm
+      - finbatchperf
+
+  children:
+
+    dev:
+      hosts:
+        dev1:
+          ansible_host: dev1.internal.local
+          db_sid: COREDEV
+        dev2:
+          ansible_host: dev2.internal.local
+          db_sid: COREDEV
+        dev3:
+          ansible_host: dev3.internal.local
+          db_sid: COREDEV
+        dev4:
+          ansible_host: dev4.internal.local
+          db_sid: COREDEV
+        dev5:
+          ansible_host: dev5.internal.local
+          db_sid: COREDEV
+        dev6:
+          ansible_host: dev6.internal.local
+          db_sid: COREDEV
+        dev7:
+          ansible_host: dev7.internal.local
+          db_sid: COREDEV
+        dev8:
+          ansible_host: dev8.internal.local
+          db_sid: COREDEV
+        dev9:
+          ansible_host: dev9.internal.local
+          db_sid: COREDEV
+        dev10:
+          ansible_host: dev10.internal.local
+          db_sid: COREDEV
+
+    dm:
+      hosts:
+        dm1:
+          ansible_host: dm1.internal.local
+          db_sid: COREDM
+        dm2:
+          ansible_host: dm2.internal.local
+          db_sid: COREDM
+
+    perf:
+      hosts:
+        perf1:
+          ansible_host: perf1.internal.local
+          db_sid: COREPERF
+        perf2:
+          ansible_host: perf2.internal.local
+          db_sid: COREPERF
+
+    esqm:
+      hosts:
+        asys:
+          ansible_host: asys.internal.local
+          db_sid: COREQA
+        tsys:
+          ansible_host: tsys.internal.local
+          db_sid: COREQA
+        msto:
+          ansible_host: msto.internal.local
+          db_sid: COREQA
+        vsto:
+          ansible_host: vsto.internal.local
+          db_sid: COREQA
+        qsys:
+          ansible_host: qsys.internal.local
+          db_sid: COREQA
