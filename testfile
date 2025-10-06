@@ -1,1 +1,84 @@
+---
+- name: Rotate Oracle DB passwords and update JBoss configs
+  hosts: all
+  gather_facts: no
+  vars:
+    db_admin_user: sys
+    db_admin_pass: SysAdmin@123        # or use vault for real runs
+    password_output_file: /tmp/db_passwords_{{ inventory_hostname }}.txt
 
+  tasks:
+
+    - name: Generate random passwords for all DB users
+      set_fact:
+        db_passwords: "{{ dict(item | zip(passwords)) }}"
+      vars:
+        item: "{{ db_users }}"
+        passwords: "{{ lookup('password', '/dev/null length=' + password_length|string + ' chars=ascii_letters,digits') | list | map('regex_replace', '^(?!.*_)(.*)$', '\\1_') | list }}"
+      delegate_to: localhost
+
+    - name: Ensure password output file exists
+      ansible.builtin.file:
+        path: "{{ password_output_file }}"
+        state: touch
+        mode: '0600'
+
+    - name: Write generated passwords to file
+      lineinfile:
+        path: "{{ password_output_file }}"
+        line: "{{ item.key }} = {{ item.value }}"
+      loop: "{{ db_passwords | dict2items }}"
+      delegate_to: localhost
+
+    - name: Backup standalone-full-ha.xml
+      shell: |
+        export JBOSS_HOME={{ jboss_home }}
+        cd {{ config_path }}
+        cp -p standalone-full-ha.xml standalone-full-ha.xml{{ backup_suffix }}
+        cp -p standalone-full-ha.xml standalone-full-ha.xml{{ backup_suffix }}_update
+
+    - name: Update Oracle user passwords using sqlplus
+      shell: |
+        export ORACLE_SID={{ db_sid }}
+        export ORAENV_ASK=NO
+        . /usr/local/bin/oraenv > /dev/null 2>&1
+        for user in {{ db_users | join(' ') }}; do
+          passwd="{{ db_passwords[user] }}"
+          echo "alter user $user identified by \"$passwd\";" | sqlplus -s {{ db_admin_user }}/{{ db_admin_pass }}@{{ db_sid }} as sysdba
+        done
+      args:
+        executable: /bin/bash
+
+    - name: Encode passwords using JBoss SecureIdentityLoginModule
+      shell: |
+        export JBOSS_HOME={{ jboss_home }}
+        export CLASSPATH=$JBOSS_HOME/modules/system/layers/base/org/picketbox/main/*:$JBOSS_HOME/modules/system/layers/base/org/jboss/logging/main/*
+        for user in {{ db_users | join(' ') }}; do
+          passwd="{{ db_passwords[user] }}"
+          encoded=$(java org.picketbox.datasource.security.SecureIdentityLoginModule "$passwd" | tail -1)
+          echo "$user:$encoded" >> /tmp/encoded_passwords_{{ inventory_hostname }}.txt
+        done
+      args:
+        executable: /bin/bash
+
+    - name: Update standalone-full-ha.xml with encoded passwords
+      shell: |
+        cd {{ config_path }}
+        while IFS=":" read -r user enc; do
+          sed -i "/<module-option name=\"username\" value=\"$user\"\/>/{
+            n; s|<module-option name=\"password\" value=\"[^\"]*\"\/>|<module-option name=\"password\" value=\"$enc\"\/>|
+          }" standalone-full-ha.xml
+        done < /tmp/encoded_passwords_{{ inventory_hostname }}.txt
+      args:
+        executable: /bin/bash
+
+    - name: Restart JBoss
+      shell: |
+        stopjboss
+        startjboss
+      args:
+        executable: /bin/bash
+
+    - name: Display password summary
+      debug:
+        msg: "Passwords rotated and updated for {{ inventory_hostname }}. Stored in {{ password_output_file }}"
