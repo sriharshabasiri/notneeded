@@ -1,1 +1,359 @@
+# application.yml
+spring:
+  application:
+    name: multi-database-app
+  datasource:
+    url: jdbc:mysql://localhost:3306/default_db
+    username: default_user
+    password: default_pass
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL8Dialect
+        format_sql: true
 
+environments:
+  dev:
+    url: jdbc:mysql://localhost:3306/dev_database
+    username: dev_user
+    password: dev_password
+  qa:
+    url: jdbc:mysql://localhost:3306/qa_database
+    username: qa_user
+    password: qa_password
+  prod:
+    url: jdbc:mysql://localhost:3306/prod_database
+    username: prod_user
+    password: prod_password
+  staging:
+    url: jdbc:mysql://localhost:3306/staging_database
+    username: staging_user
+    password: staging_password
+
+logging:
+  level:
+    com.yourpackage: DEBUG
+    org.springframework.jdbc.datasource: DEBUG
+
+
+
+
+
+
+@Component
+@ConfigurationProperties(prefix = "environments")
+public class EnvironmentConfig {
+    private Map<String, DatabaseConfig> environments = new HashMap<>();
+
+    // Getters and setters
+    public Map<String, DatabaseConfig> getEnvironments() {
+        return environments;
+    }
+
+    public void setEnvironments(Map<String, DatabaseConfig> environments) {
+        this.environments = environments;
+    }
+
+    public static class DatabaseConfig {
+        private String url;
+        private String username;
+        private String password;
+        
+        // Getters and setters
+        public String getUrl() { return url; }
+        public void setUrl(String url) { this.url = url; }
+        public String getUsername() { return username; }
+        public void setUsername(String username) { this.username = username; }
+        public String getPassword() { return password; }
+        public void setPassword(String password) { this.password = password; }
+    }
+}
+
+
+@Configuration
+public class DynamicDataSourceConfig {
+
+    @Autowired
+    private EnvironmentConfig environmentConfig;
+
+    @Bean
+    @Primary
+    public DataSource dynamicDataSource() {
+        Map<Object, Object> targetDataSources = new HashMap<>();
+        AbstractRoutingDataSource routingDataSource = new AbstractRoutingDataSource() {
+            @Override
+            protected Object determineCurrentLookupKey() {
+                return DatabaseContextHolder.getCurrentEnvironment();
+            }
+        };
+
+        // Create data sources for each environment
+        environmentConfig.getEnvironments().forEach((env, config) -> {
+            DataSource dataSource = DataSourceBuilder.create()
+                    .url(config.getUrl())
+                    .username(config.getUsername())
+                    .password(config.getPassword())
+                    .driverClassName("com.mysql.cj.jdbc.Driver")
+                    .build();
+            targetDataSources.put(env, dataSource);
+        });
+
+        routingDataSource.setTargetDataSources(targetDataSources);
+        routingDataSource.setDefaultTargetDataSource(targetDataSources.get("dev")); // Default
+        return routingDataSource;
+    }
+
+    @Bean
+    public PlatformTransactionManager transactionManager() {
+        return new DataSourceTransactionManager(dynamicDataSource());
+    }
+}
+
+
+public class DatabaseContextHolder {
+    private static final ThreadLocal<String> contextHolder = new ThreadLocal<>();
+
+    public static void setCurrentEnvironment(String environment) {
+        contextHolder.set(environment);
+    }
+
+    public static String getCurrentEnvironment() {
+        return contextHolder.get();
+    }
+
+    public static void clear() {
+        contextHolder.remove();
+    }
+}
+
+
+@Component
+public class DatabaseEnvironmentInterceptor implements HandlerInterceptor {
+
+    @Override
+    public boolean preHandle(HttpServletRequest request, 
+                           HttpServletResponse response, 
+                           Object handler) {
+        String environment = request.getHeader("X-Environment");
+        if (environment != null && !environment.isEmpty()) {
+            DatabaseContextHolder.setCurrentEnvironment(environment);
+        } else {
+            DatabaseContextHolder.setCurrentEnvironment("dev"); // Default
+        }
+        return true;
+    }
+
+    @Override
+    public void afterCompletion(HttpServletRequest request, 
+                              HttpServletResponse response, 
+                              Object handler, 
+                              Exception ex) {
+        DatabaseContextHolder.clear();
+    }
+}
+
+@Configuration
+public class WebMvcConfig implements WebMvcConfigurer {
+
+    @Autowired
+    private DatabaseEnvironmentInterceptor databaseEnvironmentInterceptor;
+
+    @Override
+    public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(databaseEnvironmentInterceptor)
+                .addPathPatterns("/api/**");
+    }
+}
+
+@RestController
+@RequestMapping("/api/data")
+public class DataController {
+
+    @Autowired
+    private DataService dataService;
+
+    @GetMapping
+    public ResponseEntity<List<MyData>> getData() {
+        // The environment is automatically set by the interceptor
+        List<MyData> data = dataService.getAllData();
+        return ResponseEntity.ok(data);
+    }
+
+    @PostMapping("/switch-environment")
+    public ResponseEntity<String> switchEnvironment(@RequestBody EnvironmentSwitchRequest request) {
+        DatabaseContextHolder.setCurrentEnvironment(request.getEnvironment());
+        return ResponseEntity.ok("Switched to environment: " + request.getEnvironment());
+    }
+}
+
+class EnvironmentSwitchRequest {
+    private String environment;
+    
+    // Getter and setter
+    public String getEnvironment() { return environment; }
+    public void setEnvironment(String environment) { this.environment = environment; }
+}
+
+
+
+// repository/BaseRepository.java
+@Repository
+public class BaseRepository {
+    
+    protected final EntityManager entityManager;
+    protected final JdbcTemplate jdbcTemplate;
+    
+    @Autowired
+    public BaseRepository(EntityManager entityManager, JdbcTemplate jdbcTemplate) {
+        this.entityManager = entityManager;
+        this.jdbcTemplate = jdbcTemplate;
+    }
+    
+    protected String getCurrentEnvironment() {
+        String env = DatabaseContextHolder.getCurrentEnvironment();
+        if (env == null) {
+            throw new IllegalStateException("No environment set in database context");
+        }
+        return env;
+    }
+    
+    protected void validateEnvironment() {
+        getCurrentEnvironment(); // Will throw exception if no environment set
+    }
+}
+
+
+// repository/UserRepository.java
+@Repository
+public class UserRepository extends BaseRepository {
+    
+    @Autowired
+    public UserRepository(EntityManager entityManager, JdbcTemplate jdbcTemplate) {
+        super(entityManager, jdbcTemplate);
+    }
+    
+    // Using JPA EntityManager
+    public List<User> findAll() {
+        validateEnvironment();
+        String queryStr = "SELECT u FROM User u";
+        TypedQuery<User> query = entityManager.createQuery(queryStr, User.class);
+        return query.getResultList();
+    }
+    
+    public Optional<User> findById(Long id) {
+        validateEnvironment();
+        User user = entityManager.find(User.class, id);
+        return Optional.ofNullable(user);
+    }
+    
+    public List<User> findByName(String name) {
+        validateEnvironment();
+        String queryStr = "SELECT u FROM User u WHERE u.name = :name";
+        TypedQuery<User> query = entityManager.createQuery(queryStr, User.class);
+        query.setParameter("name", name);
+        return query.getResultList();
+    }
+    
+    public User save(User user) {
+        validateEnvironment();
+        if (user.getId() == null) {
+            entityManager.persist(user);
+            return user;
+        } else {
+            return entityManager.merge(user);
+        }
+    }
+    
+    public void deleteById(Long id) {
+        validateEnvironment();
+        User user = entityManager.find(User.class, id);
+        if (user != null) {
+            entityManager.remove(user);
+        }
+    }
+    
+    // Using JdbcTemplate for complex queries
+    public List<Map<String, Object>> getUserStatistics() {
+        validateEnvironment();
+        String sql = """
+            SELECT environment, COUNT(*) as user_count, 
+                   MAX(created_date) as last_created
+            FROM users 
+            GROUP BY environment
+            """;
+        
+        return jdbcTemplate.queryForList(sql);
+    }
+    
+    // Batch operations
+    public void saveAll(List<User> users) {
+        validateEnvironment();
+        for (User user : users) {
+            if (user.getId() == null) {
+                entityManager.persist(user);
+            } else {
+                entityManager.merge(user);
+            }
+        }
+        entityManager.flush();
+    }
+    
+    // Native query example
+    public List<User> findUsersByEnvironment(String environmentFilter) {
+        validateEnvironment();
+        String nativeQuery = """
+            SELECT * FROM users 
+            WHERE environment = :environment 
+            ORDER BY name
+            """;
+        
+        Query query = entityManager.createNativeQuery(nativeQuery, User.class);
+        query.setParameter("environment", environmentFilter);
+        
+        @SuppressWarnings("unchecked")
+        List<User> result = query.getResultList();
+        return result;
+    }
+}
+
+
+// config/DatabaseContextHolder.java
+public class DatabaseContextHolder {
+    private static final ThreadLocal<String> contextHolder = new ThreadLocal<>();
+    private static final Set<String> validEnvironments = Set.of("dev", "qa", "prod", "staging");
+
+    public static void setCurrentEnvironment(String environment) {
+        if (environment != null && validEnvironments.contains(environment.toLowerCase())) {
+            contextHolder.set(environment.toLowerCase());
+        } else {
+            throw new IllegalArgumentException("Invalid environment: " + environment + 
+                ". Valid environments are: " + validEnvironments);
+        }
+    }
+
+    public static String getCurrentEnvironment() {
+        String env = contextHolder.get();
+        if (env == null) {
+            // Set a default environment if none is set
+            setCurrentEnvironment("dev");
+            return "dev";
+        }
+        return env;
+    }
+
+    public static void clear() {
+        contextHolder.remove();
+    }
+    
+    public static boolean isValidEnvironment(String environment) {
+        return validEnvironments.contains(environment.toLowerCase());
+    }
+    
+    public static Set<String> getValidEnvironments() {
+        return new HashSet<>(validEnvironments);
+    }
+}
