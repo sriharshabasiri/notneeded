@@ -1,35 +1,131 @@
-// service/ManualTestService.java
-@Service
-public class ManualTestService {
+// config/EarlyStartupTest.java
+@Component
+public class EarlyStartupTest implements ApplicationListener<ApplicationEvent> {
+    
+    private static final Logger logger = LoggerFactory.getLogger(EarlyStartupTest.class);
+    private boolean executed = false;
     
     @Autowired
-    private JdbcTemplate jdbcTemplate;
+    private Environment environment;
     
-    @PostConstruct
-    public void testManually() {
-        System.out.println("=== MANUAL DATABASE TEST ===");
+    @Override
+    public void onApplicationEvent(ApplicationEvent event) {
+        // Run after context is initialized but before full startup
+        if (event instanceof ApplicationReadyEvent && !executed) {
+            executed = true;
+            runEarlyTest();
+        }
+        
+        // Also catch context refresh events
+        if (event instanceof ContextRefreshedEvent && !executed) {
+            executed = true;
+            runEarlyTest();
+        }
+    }
+    
+    private void runEarlyTest() {
+        logger.info("=== RUNNING EARLY STARTUP DATABASE TEST ===");
         
         try {
-            // Test 1: Basic connection
-            String db = jdbcTemplate.queryForObject("SELECT DATABASE()", String.class);
-            System.out.println("✓ Connected to: " + db);
+            // Test basic database connectivity without JPA
+            testDatabaseConnection();
+        } catch (Exception e) {
+            logger.error("EARLY STARTUP TEST FAILED: {}", e.getMessage());
+            e.printStackTrace();
+        }
+    }
+    
+    private void testDatabaseConnection() {
+        try {
+            // Manually create a datasource to test
+            String url = environment.getProperty("environments.dev.url");
+            String username = environment.getProperty("environments.dev.username");
+            String password = environment.getProperty("environments.dev.password");
             
-            // Test 2: Direct table access
-            String sql = "SELECT COUNT(*) FROM apdmrhel.dfs_apdm_rep";
-            Integer count = jdbcTemplate.queryForObject(sql, Integer.class);
-            System.out.println("✓ Direct table access successful. Row count: " + count);
+            logger.info("Testing connection to: {}", url);
             
-            // Test 3: Describe table
-            String describeSql = "DESCRIBE apdmrhel.dfs_apdm_rep";
-            List<Map<String, Object>> columns = jdbcTemplate.queryForList(describeSql);
-            System.out.println("✓ Table structure:");
-            columns.forEach(col -> {
-                System.out.println("  - " + col.get("Field") + " : " + col.get("Type"));
-            });
+            DataSource dataSource = DataSourceBuilder.create()
+                .url(url)
+                .username(username)
+                .password(password)
+                .driverClassName("com.mysql.cj.jdbc.Driver")
+                .build();
+            
+            try (Connection conn = dataSource.getConnection()) {
+                DatabaseMetaData metaData = conn.getMetaData();
+                logger.info("✓ Successfully connected to: {}", metaData.getDatabaseProductName());
+                
+                // Test table access
+                testTableAccess(conn);
+            }
             
         } catch (Exception e) {
-            System.err.println("✗ Manual test failed: " + e.getMessage());
-            e.printStackTrace();
+            throw new RuntimeException("Early database test failed: " + e.getMessage(), e);
+        }
+    }
+    
+    private void testTableAccess(Connection conn) {
+        try {
+            // Test if table exists
+            DatabaseMetaData metaData = conn.getMetaData();
+            ResultSet tables = metaData.getTables(null, "apdmrhel", "dfs_apdm_rep", null);
+            
+            if (tables.next()) {
+                String tableSchema = tables.getString("TABLE_SCHEM");
+                String tableName = tables.getString("TABLE_NAME");
+                logger.info("✓ Found table: {}.{}", tableSchema, tableName);
+                
+                // Test simple query
+                testSimpleQuery(conn);
+            } else {
+                logger.error("✗ Table not found: apdmrhel.dfs_apdm_rep");
+                // Try different variations
+                searchForTable(conn);
+            }
+            
+        } catch (Exception e) {
+            logger.error("Table access test failed: {}", e.getMessage());
+        }
+    }
+    
+    private void searchForTable(Connection conn) {
+        try {
+            DatabaseMetaData metaData = conn.getMetaData();
+            
+            // Try different schema/table combinations
+            String[][] variations = {
+                {"apdmrhel", "dfs_apdm_rep"},
+                {"APDMREHEL", "dfs_apdm_rep"},
+                {"apdmrhel", "DFS_APDM_REP"},
+                {null, "dfs_apdm_rep"}
+            };
+            
+            for (String[] variation : variations) {
+                ResultSet tables = metaData.getTables(null, variation[0], variation[1], null);
+                if (tables.next()) {
+                    logger.info("✓ Found table variation: {}.{}", 
+                        tables.getString("TABLE_SCHEM"), tables.getString("TABLE_NAME"));
+                    return;
+                }
+            }
+            
+            logger.error("✗ Table not found with any variation");
+            
+        } catch (Exception e) {
+            logger.error("Table search failed: {}", e.getMessage());
+        }
+    }
+    
+    private void testSimpleQuery(Connection conn) {
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM apdmrhel.dfs_apdm_rep")) {
+            
+            if (rs.next()) {
+                int count = rs.getInt(1);
+                logger.info("✓ Successfully queried table. Row count: {}", count);
+            }
+        } catch (Exception e) {
+            logger.error("✗ Query failed: {}", e.getMessage());
         }
     }
 }
