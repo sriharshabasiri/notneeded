@@ -1,194 +1,166 @@
-// OracleDiagnostic.java
+// OracleCrossSchemaDiagnostic.java
 import java.sql.*;
 import java.util.*;
 
-public class OracleDiagnostic {
+public class OracleCrossSchemaDiagnostic {
     
     public static void main(String[] args) {
-        System.out.println("🚀 ORACLE DATABASE DIAGNOSTIC STARTING...\n");
+        System.out.println("🚀 ORACLE CROSS-SCHEMA DIAGNOSTIC STARTING...\n");
         
-        // Test multiple connection scenarios
-        testAllConnections();
+        testCrossSchemaAccess();
     }
     
-    private static void testAllConnections() {
-        String host = "localhost";
-        String port = "1521"; // Oracle default port
-        String username = "your_username"; // REPLACE WITH ACTUAL
-        String password = "your_password"; // REPLACE WITH ACTUAL
+    private static void testCrossSchemaAccess() {
+        String url = "jdbc:oracle:thin:@localhost:1521:XE"; // Adjust as needed
+        String username = "coreauto_s"; // Your connecting user
+        String password = "your_password"; // Your password
         
-        List<String> testCases = new ArrayList<>();
-        
-        // Oracle connection URL formats
-        // Format 1: SID format
-        testCases.add("jdbc:oracle:thin:@" + host + ":" + port + ":XE");
-        testCases.add("jdbc:oracle:thin:@" + host + ":" + port + ":ORCL");
-        
-        // Format 2: Service name format
-        testCases.add("jdbc:oracle:thin:@//" + host + ":" + port + "/XE");
-        testCases.add("jdbc:oracle:thin:@//" + host + ":" + port + "/ORCLCDB");
-        testCases.add("jdbc:oracle:thin:@//" + host + ":" + port + "/ORCL");
-        
-        // Format 3: TNS format (if you have tnsnames.ora)
-        // testCases.add("jdbc:oracle:thin:@(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=" + host + ")(PORT=" + port + "))(CONNECT_DATA=(SID=XE)))");
-        
-        for (String url : testCases) {
-            testConnection(url, username, password);
-        }
+        testConnection(url, username, password);
     }
     
     private static void testConnection(String url, String username, String password) {
-        System.out.println("🔗 Testing: " + url);
+        System.out.println("🔗 Testing connection as: " + username);
+        System.out.println("   URL: " + url);
         
         try {
-            // Load Oracle driver
             Class.forName("oracle.jdbc.OracleDriver");
             
-            // Test connection
             try (Connection conn = DriverManager.getConnection(url, username, password)) {
-                System.out.println("✅ ORACLE CONNECTION SUCCESSFUL");
+                System.out.println("✅ CONNECTION SUCCESSFUL");
                 
-                DatabaseMetaData meta = conn.getMetaData();
-                System.out.println("   Database: " + meta.getDatabaseProductName() + " " + meta.getDatabaseProductVersion());
-                System.out.println("   URL: " + meta.getURL());
-                System.out.println("   User: " + meta.getUserName());
-                
-                // Get current user/schema
+                // Get current user
                 String currentUser = getCurrentUser(conn);
-                System.out.println("   Current User: " + currentUser);
+                System.out.println("   Connected as: " + currentUser);
                 
-                // List ALL schemas (users) that we have access to
-                System.out.println("\n📋 ALL SCHEMAS (USERS) WE CAN ACCESS:");
-                listAllSchemas(conn);
+                // Test access to apdmrhel.dfs_apdm_rep
+                testTableAccess(conn, "apdmrhel", "dfs_apdm_rep");
                 
-                // List tables in current schema
-                System.out.println("\n📊 TABLES IN CURRENT SCHEMA:");
-                listTablesInCurrentSchema(conn);
+                // List all tables we can access in apdmrhel schema
+                System.out.println("\n📋 ALL TABLES ACCESSIBLE IN APDMREHEL SCHEMA:");
+                listTablesInSchema(conn, "apdmrhel");
                 
-                // Specifically search for our table
-                searchForOurTable(conn, currentUser);
+                // Check permissions on our target table
+                checkTablePermissions(conn, "apdmrhel", "dfs_apdm_rep");
                 
             } catch (SQLException e) {
                 System.out.println("❌ CONNECTION FAILED: " + e.getMessage());
-                System.out.println("   SQL State: " + e.getSQLState());
                 System.out.println("   Error Code: " + e.getErrorCode());
-                if (e.getErrorCode() == 1017) {
-                    System.out.println("   💡 This is an invalid username/password error");
-                } else if (e.getErrorCode() == 12505) {
-                    System.out.println("   💡 TNS listener error - check SID/service name");
-                }
             }
             
         } catch (ClassNotFoundException e) {
-            System.out.println("❌ ORACLE JDBC DRIVER NOT FOUND");
-            System.out.println("   Download from: https://www.oracle.com/database/technologies/appdev/jdbc-downloads.html");
+            System.out.println("❌ ORACLE DRIVER NOT FOUND");
         } catch (Exception e) {
             System.out.println("❌ UNEXPECTED ERROR: " + e.getMessage());
         }
+    }
+    
+    private static void testTableAccess(Connection conn, String schema, String tableName) {
+        System.out.println("\n🔎 TESTING ACCESS TO: " + schema + "." + tableName);
         
-        System.out.println("---".repeat(20) + "\n");
+        // Test 1: Simple SELECT count
+        try {
+            String sql = "SELECT COUNT(*) FROM " + schema + "." + tableName;
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery(sql)) {
+                if (rs.next()) {
+                    int count = rs.getInt(1);
+                    System.out.println("✅ SELECT ACCESS: SUCCESS - " + count + " rows");
+                }
+            }
+        } catch (SQLException e) {
+            System.out.println("❌ SELECT ACCESS FAILED: " + e.getMessage());
+        }
+        
+        // Test 2: Describe table structure
+        try {
+            System.out.println("\n📐 TABLE STRUCTURE:");
+            String sql = "SELECT column_name, data_type, nullable " +
+                        "FROM all_tab_columns " +
+                        "WHERE owner = UPPER(?) AND table_name = UPPER(?) " +
+                        "ORDER BY column_id";
+            
+            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                pstmt.setString(1, schema);
+                pstmt.setString(2, tableName);
+                
+                ResultSet rs = pstmt.executeQuery();
+                int colCount = 0;
+                while (rs.next()) {
+                    String colName = rs.getString("column_name");
+                    String dataType = rs.getString("data_type");
+                    String nullable = rs.getString("nullable");
+                    System.out.println("   - " + colName + " | " + dataType + " | " + 
+                                     (nullable.equals("Y") ? "NULL" : "NOT NULL"));
+                    colCount++;
+                }
+                if (colCount == 0) {
+                    System.out.println("   ❌ No columns found - table might not exist or no access");
+                }
+            }
+        } catch (SQLException e) {
+            System.out.println("❌ Failed to get table structure: " + e.getMessage());
+        }
+    }
+    
+    private static void listTablesInSchema(Connection conn, String schema) {
+        try {
+            String sql = "SELECT table_name, tablespace_name " +
+                        "FROM all_tables " +
+                        "WHERE owner = UPPER(?) " +
+                        "ORDER BY table_name";
+            
+            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                pstmt.setString(1, schema);
+                
+                ResultSet rs = pstmt.executeQuery();
+                int count = 0;
+                while (rs.next()) {
+                    String tableName = rs.getString("table_name");
+                    String tablespace = rs.getString("tablespace_name");
+                    System.out.println("   - " + tableName + " (tablespace: " + tablespace + ")");
+                    count++;
+                }
+                System.out.println("   Total: " + count + " tables");
+            }
+        } catch (SQLException e) {
+            System.out.println("   Failed to list tables: " + e.getMessage());
+        }
+    }
+    
+    private static void checkTablePermissions(Connection conn, String schema, String tableName) {
+        System.out.println("\n🔐 CHECKING PERMISSIONS ON: " + schema + "." + tableName);
+        
+        try {
+            String sql = "SELECT privilege, grantable " +
+                        "FROM user_tab_privs " +
+                        "WHERE owner = UPPER(?) AND table_name = UPPER(?)";
+            
+            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                pstmt.setString(1, schema);
+                pstmt.setString(2, tableName);
+                
+                ResultSet rs = pstmt.executeQuery();
+                int privCount = 0;
+                while (rs.next()) {
+                    String privilege = rs.getString("privilege");
+                    String grantable = rs.getString("grantable");
+                    System.out.println("   - " + privilege + 
+                                     (grantable.equals("YES") ? " (WITH GRANT OPTION)" : ""));
+                    privCount++;
+                }
+                if (privCount == 0) {
+                    System.out.println("   ❌ NO EXPLICIT PERMISSIONS FOUND");
+                }
+            }
+        } catch (SQLException e) {
+            System.out.println("   Failed to check permissions: " + e.getMessage());
+        }
     }
     
     private static String getCurrentUser(Connection conn) throws SQLException {
         try (Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery("SELECT USER FROM DUAL")) {
-            if (rs.next()) {
-                return rs.getString(1);
-            }
-        }
-        return "unknown";
-    }
-    
-    private static void listAllSchemas(Connection conn) throws SQLException {
-        DatabaseMetaData meta = conn.getMetaData();
-        
-        // Get all schemas (users) we can see
-        try (ResultSet schemas = meta.getSchemas()) {
-            int count = 0;
-            while (schemas.next()) {
-                String schema = schemas.getString("TABLE_SCHEM");
-                System.out.println("   - " + schema);
-                count++;
-            }
-            System.out.println("   Total: " + count + " schemas");
-        }
-    }
-    
-    private static void listTablesInCurrentSchema(Connection conn) throws SQLException {
-        DatabaseMetaData meta = conn.getMetaData();
-        String currentUser = getCurrentUser(conn);
-        
-        // Get tables in current schema
-        try (ResultSet tables = meta.getTables(null, currentUser, "%", new String[]{"TABLE"})) {
-            int tableCount = 0;
-            while (tables.next()) {
-                String tableName = tables.getString("TABLE_NAME");
-                String tableType = tables.getString("TABLE_TYPE");
-                System.out.println("   - " + tableName + " (" + tableType + ")");
-                tableCount++;
-            }
-            System.out.println("   Total: " + tableCount + " tables");
-        }
-    }
-    
-    private static void searchForOurTable(Connection conn, String currentSchema) {
-        System.out.println("\n🔎 SEARCHING FOR OUR TABLE...");
-        
-        String[] tablePatterns = {"%APDM%", "%REP%", "%DFS%", "%APDM_REP%", "%DFS_APDM%"};
-        
-        try {
-            DatabaseMetaData meta = conn.getMetaData();
-            
-            for (String pattern : tablePatterns) {
-                System.out.println("   Searching for pattern: " + pattern);
-                
-                // Search in current schema
-                try (ResultSet tables = meta.getTables(null, currentSchema, pattern, new String[]{"TABLE"})) {
-                    while (tables.next()) {
-                        String tableName = tables.getString("TABLE_NAME");
-                        System.out.println("   ✅ FOUND IN CURRENT SCHEMA: " + tableName);
-                        showTableStructure(conn, currentSchema, tableName);
-                    }
-                }
-                
-                // Search in all schemas
-                try (ResultSet tables = meta.getTables(null, null, pattern, new String[]{"TABLE"})) {
-                    while (tables.next()) {
-                        String schema = tables.getString("TABLE_SCHEM");
-                        String tableName = tables.getString("TABLE_NAME");
-                        if (!schema.equals(currentSchema)) {
-                            System.out.println("   🔍 FOUND IN SCHEMA " + schema + ": " + tableName);
-                        }
-                    }
-                }
-            }
-        } catch (Exception e) {
-            System.out.println("   Search failed: " + e.getMessage());
-        }
-    }
-    
-    private static void showTableStructure(Connection conn, String schema, String tableName) {
-        try {
-            System.out.println("   📐 STRUCTURE OF " + schema + "." + tableName + ":");
-            
-            // Oracle-specific: describe table
-            String sql = "SELECT column_name, data_type, nullable FROM all_tab_columns " +
-                        "WHERE owner = ? AND table_name = ? ORDER BY column_id";
-            
-            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-                pstmt.setString(1, schema.toUpperCase());
-                pstmt.setString(2, tableName.toUpperCase());
-                
-                ResultSet rs = pstmt.executeQuery();
-                while (rs.next()) {
-                    String column = rs.getString("column_name");
-                    String type = rs.getString("data_type");
-                    String nullable = rs.getString("nullable");
-                    System.out.println("      - " + column + " | " + type + " | " + nullable);
-                }
-            }
-        } catch (Exception e) {
-            System.out.println("   Failed to describe table: " + e.getMessage());
+            return rs.next() ? rs.getString(1) : "unknown";
         }
     }
 }
