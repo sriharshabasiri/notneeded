@@ -1,260 +1,109 @@
-// config/VeryEarlyTest.java
-@Configuration
-public class VeryEarlyTest {
+// Update your main class preSpringTest method:
+private static void preSpringTest() {
+    System.out.println("🔍 PRE-SPRING DATABASE TEST");
     
-    private static final Logger logger = LoggerFactory.getLogger(VeryEarlyTest.class);
-    
-    @Autowired
-    private Environment environment;
-    
-    @PostConstruct
-    public void veryEarlyTest() {
-        logger.info("=== VERY EARLY DATABASE TEST (RUNNING NOW) ===");
-        System.out.println("🚀 VERY EARLY TEST STARTED - This should print immediately!");
+    try {
+        // Try multiple connection URLs
+        String[] testUrls = {
+            "jdbc:mysql://localhost:3306/apdmrhel",
+            "jdbc:mysql://localhost:3306/apdmrhel?useSSL=false&serverTimezone=UTC",
+            "jdbc:mysql://localhost:3306/",  // Connect without default database
+        };
         
-        try {
-            testDatabaseConnection();
-        } catch (Exception e) {
-            logger.error("VERY EARLY TEST FAILED: {}", e.getMessage());
-            e.printStackTrace();
-            // Don't throw - just log so we can see what happened
-        }
-    }
-    
-    private void testDatabaseConnection() {
-        try {
-            // Get properties directly
-            String url = environment.getProperty("environments.dev.url");
-            String username = environment.getProperty("environments.dev.username"); 
-            String password = environment.getProperty("environments.dev.password");
-            
-            if (url == null) {
-                logger.error("❌ No database URL found in properties");
-                listAllProperties();
-                return;
-            }
-            
-            logger.info("Testing connection to: {}", url);
-            System.out.println("🔗 Connecting to: " + url);
-            
-            // Manual connection test
-            Class.forName("com.mysql.cj.jdbc.Driver");
+        String username = "your_username";  // Replace with actual username
+        String password = "your_password";  // Replace with actual password
+        
+        Class.forName("com.mysql.cj.jdbc.Driver");
+        
+        for (String url : testUrls) {
+            System.out.println("Testing URL: " + url);
             try (Connection conn = DriverManager.getConnection(url, username, password)) {
-                String dbName = conn.getCatalog();
-                logger.info("✅ SUCCESS - Connected to database: {}", dbName);
-                System.out.println("✅ SUCCESS - Connected to: " + dbName);
+                String catalog = conn.getCatalog();
+                String schema = conn.getSchema();
+                DatabaseMetaData metaData = conn.getMetaData();
                 
-                // Test our specific table
-                testTargetTable(conn);
-            }
-            
-        } catch (Exception e) {
-            logger.error("❌ Connection failed: {}", e.getMessage());
-            System.out.println("❌ CONNECTION FAILED: " + e.getMessage());
-            e.printStackTrace();
-        }
-    }
-    
-    private void testTargetTable(Connection conn) {
-        try {
-            DatabaseMetaData metaData = conn.getMetaData();
-            
-            // Try multiple table name variations
-            String[][] variations = {
-                {"apdmrhel", "dfs_apdm_rep"},
-                {"apdmrhel", "DFS_APDM_REP"}, 
-                {null, "dfs_apdm_rep"},
-                {null, "DFS_APDM_REP"},
-                {"apdmrhel", "%apdm_rep%"}
-            };
-            
-            boolean found = false;
-            for (String[] variation : variations) {
-                ResultSet tables = metaData.getTables(null, variation[0], variation[1], new String[]{"TABLE"});
-                if (tables.next()) {
-                    String catalog = tables.getString("TABLE_CAT");
-                    String schema = tables.getString("TABLE_SCHEM");
-                    String tableName = tables.getString("TABLE_NAME");
-                    
-                    logger.info("✅ FOUND TABLE: {}.{}.{}", catalog, schema, tableName);
-                    System.out.println("✅ FOUND TABLE: " + catalog + "." + schema + "." + tableName);
-                    
-                    // Test query
-                    testTableQuery(conn, catalog, schema, tableName);
-                    found = true;
-                    break;
+                System.out.println("✅ Connected successfully!");
+                System.out.println("   Catalog: " + catalog);
+                System.out.println("   Schema: " + schema);
+                System.out.println("   Database: " + metaData.getDatabaseProductName() + " " + metaData.getDatabaseProductVersion());
+                
+                // List all databases
+                System.out.println("📋 Available databases:");
+                try (ResultSet rs = conn.getMetaData().getCatalogs()) {
+                    while (rs.next()) {
+                        String dbName = rs.getString("TABLE_CAT");
+                        System.out.println("   - " + dbName);
+                    }
                 }
+                
+                // If we have a catalog, test our table
+                if (catalog != null) {
+                    testTableInDatabase(conn, catalog);
+                } else {
+                    // Try to find our database
+                    findAndTestOurDatabase(conn);
+                }
+                
+                break; // Stop if one URL works
+                
+            } catch (SQLException e) {
+                System.out.println("❌ Failed with URL: " + url + " - " + e.getMessage());
             }
-            
-            if (!found) {
-                logger.error("❌ Table not found with any variation");
-                System.out.println("❌ TABLE NOT FOUND - Listing all tables...");
-                listAllTables(conn);
-            }
-            
-        } catch (Exception e) {
-            logger.error("Table test failed: {}", e.getMessage());
-            System.out.println("❌ TABLE TEST FAILED: " + e.getMessage());
         }
+        
+    } catch (Exception e) {
+        System.out.println("❌ PRE-SPRING TEST FAILED: " + e.getMessage());
+        e.printStackTrace();
     }
+}
+
+private static void testTableInDatabase(Connection conn, String database) throws SQLException {
+    System.out.println("🔍 Testing table in database: " + database);
     
-    private void testTableQuery(Connection conn, String catalog, String schema, String tableName) {
+    // Test our specific table
+    String[] tableVariations = {"dfs_apdm_rep", "DFS_APDM_REP"};
+    
+    for (String tableName : tableVariations) {
         try {
-            String fullTableName = (schema != null ? schema + "." : "") + tableName;
-            String sql = "SELECT COUNT(*) as count FROM " + fullTableName;
-            
+            String sql = "SELECT COUNT(*) FROM " + database + "." + tableName;
             try (Statement stmt = conn.createStatement();
                  ResultSet rs = stmt.executeQuery(sql)) {
-                 
                 if (rs.next()) {
-                    int count = rs.getInt("count");
-                    logger.info("✅ QUERY SUCCESS - Table {} has {} rows", fullTableName, count);
-                    System.out.println("✅ QUERY SUCCESS - " + fullTableName + " has " + count + " rows");
+                    int count = rs.getInt(1);
+                    System.out.println("✅ TABLE FOUND: " + database + "." + tableName + " has " + count + " rows");
+                    return;
                 }
             }
-        } catch (Exception e) {
-            logger.error("Query failed: {}", e.getMessage());
-            System.out.println("❌ QUERY FAILED: " + e.getMessage());
+        } catch (SQLException e) {
+            System.out.println("❌ Table not found: " + database + "." + tableName + " - " + e.getMessage());
         }
     }
     
-    private void listAllTables(Connection conn) {
-        try {
-            DatabaseMetaData metaData = conn.getMetaData();
-            ResultSet tables = metaData.getTables(null, null, "%", new String[]{"TABLE"});
-            
-            System.out.println("📋 ALL TABLES IN DATABASE:");
-            int count = 0;
-            while (tables.next()) {
-                String catalog = tables.getString("TABLE_CAT");
-                String schema = tables.getString("TABLE_SCHEM");
-                String tableName = tables.getString("TABLE_NAME");
-                System.out.println("   - " + catalog + "." + schema + "." + tableName);
-                count++;
-            }
-            System.out.println("Total tables found: " + count);
-            
-        } catch (Exception e) {
-            System.out.println("Failed to list tables: " + e.getMessage());
+    // If table not found, list all tables in the database
+    System.out.println("📋 All tables in database '" + database + "':");
+    try (ResultSet tables = conn.getMetaData().getTables(database, null, "%", new String[]{"TABLE"})) {
+        int tableCount = 0;
+        while (tables.next()) {
+            String schema = tables.getString("TABLE_SCHEM");
+            String tableName = tables.getString("TABLE_NAME");
+            System.out.println("   - " + (schema != null ? schema + "." : "") + tableName);
+            tableCount++;
         }
-    }
-    
-    private void listAllProperties() {
-        System.out.println("🔍 ALL PROPERTIES STARTING WITH 'environments':");
-        for (String propName : ((AbstractEnvironment) environment).getPropertySources().stream()
-                .map(PropertySource::getName)
-                .collect(Collectors.toList())) {
-            if (propName.contains("environments")) {
-                System.out.println("   - " + propName);
-            }
-        }
+        System.out.println("Total tables: " + tableCount);
     }
 }
 
-
-
-// config/ImmediateTest.java
-@Component
-@Order(1) // Run as early as possible
-public class ImmediateTest implements ApplicationRunner {
+private static void findAndTestOurDatabase(Connection conn) throws SQLException {
+    System.out.println("🔍 Searching for our database...");
     
-    private static final Logger logger = LoggerFactory.getLogger(ImmediateTest.class);
-    
-    @Autowired
-    private Environment environment;
-    
-    @Override
-    public void run(ApplicationArguments args) throws Exception {
-        logger.info("=== IMMEDIATE TEST (ApplicationRunner) ===");
-        System.out.println("🚀 IMMEDIATE TEST STARTED via ApplicationRunner");
-        
-        testImmediately();
-    }
-    
-    private void testImmediately() {
-        // Same test logic as above
-        testDatabaseConnection();
-    }
-    
-    private void testDatabaseConnection() {
-        // Copy the same method from VeryEarlyTest
-        try {
-            String url = environment.getProperty("environments.dev.url");
-            String username = environment.getProperty("environments.dev.username"); 
-            String password = environment.getProperty("environments.dev.password");
-            
-            System.out.println("URL: " + url);
-            System.out.println("Username: " + username);
-            
-            // ... rest of the test logic
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-}
-
-
-
-
-// Your main application class
-@SpringBootApplication
-public class Application {
-    
-    private static final Logger logger = LoggerFactory.getLogger(Application.class);
-    
-    // Static initializer - runs when class loads
-    static {
-        System.out.println("🎯 STATIC INITIALIZER - This runs when the class loads");
-    }
-    
-    // Instance initializer - runs when instance is created
-    {
-        System.out.println("🎯 INSTANCE INITIALIZER - This runs when Application instance is created");
-    }
-    
-    public static void main(String[] args) {
-        System.out.println("🚀 MAIN METHOD STARTED");
-        
-        try {
-            // Test before Spring even starts
-            preSpringTest();
-            
-            SpringApplication app = new SpringApplication(Application.class);
-            app.setBannerMode(Banner.Mode.OFF);
-            app.run(args);
-            
-        } catch (Exception e) {
-            System.err.println("💥 APPLICATION FAILED: " + e.getMessage());
-            e.printStackTrace();
-        }
-    }
-    
-    private static void preSpringTest() {
-        System.out.println("🔍 PRE-SPRING DATABASE TEST");
-        
-        try {
-            // Read properties manually
-            Properties props = new Properties();
-            try (InputStream input = Application.class.getClassLoader()
-                    .getResourceAsStream("application.yml")) {
-                if (input != null) {
-                    // Simple property read for testing
-                    System.out.println("Found application.yml");
-                }
+    // Look for databases that might be ours
+    try (ResultSet catalogs = conn.getMetaData().getCatalogs()) {
+        while (catalogs.next()) {
+            String dbName = catalogs.getString("TABLE_CAT");
+            if (dbName.toLowerCase().contains("apdm") || dbName.toLowerCase().contains("rhel")) {
+                System.out.println("🎯 Found potential database: " + dbName);
+                testTableInDatabase(conn, dbName);
             }
-            
-            // Try manual database connection
-            String url = "jdbc:mysql://localhost:3306/apdmrhel";
-            String username = "your_username";
-            String password = "your_password";
-            
-            Class.forName("com.mysql.cj.jdbc.Driver");
-            try (Connection conn = DriverManager.getConnection(url, username, password)) {
-                System.out.println("✅ PRE-SPRING: Connected to " + conn.getCatalog());
-            }
-            
-        } catch (Exception e) {
-            System.out.println("❌ PRE-SPRING TEST FAILED: " + e.getMessage());
         }
     }
 }
