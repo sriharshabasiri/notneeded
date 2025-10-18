@@ -1,1 +1,35 @@
-
+// service/ManualTestService.java
+@Service
+public class ManualTestService {
+    
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    
+    @PostConstruct
+    public void testManually() {
+        System.out.println("=== MANUAL DATABASE TEST ===");
+        
+        try {
+            // Test 1: Basic connection
+            String db = jdbcTemplate.queryForObject("SELECT DATABASE()", String.class);
+            System.out.println("✓ Connected to: " + db);
+            
+            // Test 2: Direct table access
+            String sql = "SELECT COUNT(*) FROM apdmrhel.dfs_apdm_rep";
+            Integer count = jdbcTemplate.queryForObject(sql, Integer.class);
+            System.out.println("✓ Direct table access successful. Row count: " + count);
+            
+            // Test 3: Describe table
+            String describeSql = "DESCRIBE apdmrhel.dfs_apdm_rep";
+            List<Map<String, Object>> columns = jdbcTemplate.queryForList(describeSql);
+            System.out.println("✓ Table structure:");
+            columns.forEach(col -> {
+                System.out.println("  - " + col.get("Field") + " : " + col.get("Type"));
+            });
+            
+        } catch (Exception e) {
+            System.err.println("✗ Manual test failed: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+}
