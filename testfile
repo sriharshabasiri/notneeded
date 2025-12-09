@@ -1,1 +1,1005 @@
+src/main/java/com/example/auditdemo/
+├── config/
+├── controller/
+├── dto/
+├── entity/
+├── repository/
+├── service/
+├── aspect/
+├── filter/
+├── annotation/
+└── AuditDemoApplication.java
 
+1. Dependencies (pom.xml)
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.1.5</version>
+    </parent>
+    
+    <groupId>com.example</groupId>
+    <artifactId>audit-demo</artifactId>
+    <version>1.0.0</version>
+    
+    <properties>
+        <java.version>17</java.version>
+    </properties>
+    
+    <dependencies>
+        <!-- Spring Boot Starters -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        
+        <!-- Database -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <!-- For MySQL: -->
+        <!-- <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+        </dependency> -->
+        
+        <!-- Utilities -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-lang3</artifactId>
+        </dependency>
+        
+        <!-- For testing -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+    
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+
+
+AuditLog.java
+package com.example.auditdemo.entity;
+
+import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import org.hibernate.annotations.CreationTimestamp;
+
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "audit_logs")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class AuditLog {
+    
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(name = "username", nullable = false)
+    private String username;
+    
+    @Column(name = "api_endpoint", nullable = false, length = 1000)
+    private String apiEndpoint;
+    
+    @Column(name = "http_method", nullable = false, length = 10)
+    private String httpMethod;
+    
+    @Column(name = "request_body", columnDefinition = "TEXT")
+    private String requestBody;
+    
+    @Column(name = "response_body", columnDefinition = "TEXT")
+    private String responseBody;
+    
+    @Column(name = "http_status", nullable = false)
+    private Integer httpStatus;
+    
+    @Column(name = "client_ip", length = 45)
+    private String clientIp;
+    
+    @Column(name = "user_agent", length = 1000)
+    private String userAgent;
+    
+    @Column(name = "execution_time")
+    private Long executionTime; // in milliseconds
+    
+    @Column(name = "timestamp", nullable = false)
+    @CreationTimestamp
+    private LocalDateTime timestamp;
+    
+    @Column(name = "error_message", columnDefinition = "TEXT")
+    private String errorMessage;
+    
+    @Column(name = "service_name", length = 100)
+    private String serviceName;
+    
+    @Column(name = "correlation_id", length = 100)
+    private String correlationId;
+    
+    @Column(name = "session_id", length = 100)
+    private String sessionId;
+    
+    @Column(name = "request_headers", columnDefinition = "TEXT")
+    private String requestHeaders;
+    
+    @PrePersist
+    public void prePersist() {
+        if (timestamp == null) {
+            timestamp = LocalDateTime.now();
+        }
+    }
+}
+
+AuditLogDTO.java
+
+package com.example.auditdemo.dto;
+
+import com.fasterxml.jackson.annotation.JsonFormat;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class AuditLogDTO {
+    private Long id;
+    private String username;
+    private String apiEndpoint;
+    private String httpMethod;
+    private String requestBody;
+    private String responseBody;
+    private Integer httpStatus;
+    private String clientIp;
+    private String userAgent;
+    private Long executionTime;
+    
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    private LocalDateTime timestamp;
+    
+    private String errorMessage;
+    private String serviceName;
+    private String correlationId;
+}
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+class AuditLogRequestDTO {
+    private String username;
+    private String apiEndpoint;
+    private String httpMethod;
+    private String requestBody;
+    private String responseBody;
+    private Integer httpStatus;
+    private String clientIp;
+    private String userAgent;
+    private Long executionTime;
+    private String errorMessage;
+    private String serviceName;
+    private String correlationId;
+}
+
+
+AuditLogRepository.java
+package com.example.auditdemo.repository;
+
+import com.example.auditdemo.entity.AuditLog;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Repository
+public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
+    
+    Page<AuditLog> findByUsername(String username, Pageable pageable);
+    
+    Page<AuditLog> findByApiEndpointContaining(String endpoint, Pageable pageable);
+    
+    Page<AuditLog> findByHttpStatus(Integer httpStatus, Pageable pageable);
+    
+    @Query("SELECT a FROM AuditLog a WHERE a.timestamp BETWEEN :startDate AND :endDate")
+    Page<AuditLog> findByTimestampBetween(@Param("startDate") LocalDateTime startDate, 
+                                         @Param("endDate") LocalDateTime endDate, 
+                                         Pageable pageable);
+    
+    @Query("SELECT a FROM AuditLog a WHERE " +
+           "(:username IS NULL OR a.username LIKE %:username%) AND " +
+           "(:endpoint IS NULL OR a.apiEndpoint LIKE %:endpoint%) AND " +
+           "(:method IS NULL OR a.httpMethod = :method) AND " +
+           "(:status IS NULL OR a.httpStatus = :status) AND " +
+           "a.timestamp BETWEEN :startDate AND :endDate")
+    Page<AuditLog> searchAuditLogs(@Param("username") String username,
+                                  @Param("endpoint") String endpoint,
+                                  @Param("method") String method,
+                                  @Param("status") Integer status,
+                                  @Param("startDate") LocalDateTime startDate,
+                                  @Param("endDate") LocalDateTime endDate,
+                                  Pageable pageable);
+    
+    @Query("SELECT COUNT(a) FROM AuditLog a WHERE a.timestamp >= :date")
+    Long countSince(@Param("date") LocalDateTime date);
+    
+    @Query("SELECT a.httpStatus, COUNT(a) FROM AuditLog a WHERE a.timestamp BETWEEN :start AND :end GROUP BY a.httpStatus")
+    List<Object[]> getStatusCount(@Param("start") LocalDateTime start, 
+                                 @Param("end") LocalDateTime end);
+}
+
+
+AuditLogService.java
+package com.example.auditdemo.service;
+
+import com.example.auditdemo.dto.AuditLogDTO;
+import com.example.auditdemo.entity.AuditLog;
+import com.example.auditdemo.repository.AuditLogRepository;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+import org.springframework.web.util.ContentCachingRequestWrapper;
+import org.springframework.web.util.ContentCachingResponseWrapper;
+
+import java.io.UnsupportedEncodingException;
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class AuditLogService {
+    
+    private final AuditLogRepository auditLogRepository;
+    private final ObjectMapper objectMapper;
+    private final HttpServletRequest httpServletRequest;
+    
+    public AuditLog save(AuditLog auditLog) {
+        return auditLogRepository.save(auditLog);
+    }
+    
+    @Async
+    public void saveAsync(AuditLog auditLog) {
+        try {
+            auditLogRepository.save(auditLog);
+        } catch (Exception e) {
+            log.error("Failed to save audit log asynchronously", e);
+        }
+    }
+    
+    public Page<AuditLog> getAllAuditLogs(Pageable pageable) {
+        return auditLogRepository.findAll(pageable);
+    }
+    
+    public Page<AuditLog> searchAuditLogs(String username, String endpoint, 
+                                         String method, Integer status,
+                                         LocalDateTime startDate, LocalDateTime endDate,
+                                         Pageable pageable) {
+        if (startDate == null) startDate = LocalDateTime.now().minusDays(7);
+        if (endDate == null) endDate = LocalDateTime.now();
+        
+        return auditLogRepository.searchAuditLogs(username, endpoint, method, status, 
+                                                 startDate, endDate, pageable);
+    }
+    
+    public AuditLog createAuditLog(HttpServletRequest request, 
+                                  Object requestBody, 
+                                  Object responseBody, 
+                                  long executionTime, 
+                                  Exception exception) {
+        
+        AuditLog auditLog = new AuditLog();
+        
+        // Get current user
+        String username = getCurrentUsername();
+        auditLog.setUsername(username != null ? username : "ANONYMOUS");
+        
+        // Set request details
+        auditLog.setApiEndpoint(request.getRequestURI());
+        auditLog.setHttpMethod(request.getMethod());
+        auditLog.setClientIp(getClientIp(request));
+        auditLog.setUserAgent(request.getHeader("User-Agent"));
+        
+        // Set request/response bodies (mask sensitive data)
+        try {
+            auditLog.setRequestBody(maskSensitiveData(objectMapper.writeValueAsString(requestBody), 
+                                                     request.getRequestURI()));
+            
+            if (responseBody != null) {
+                auditLog.setResponseBody(maskSensitiveData(objectMapper.writeValueAsString(responseBody), 
+                                                          request.getRequestURI()));
+            }
+        } catch (JsonProcessingException e) {
+            auditLog.setRequestBody("Error parsing request/response");
+        }
+        
+        // Set status and error
+        if (exception != null) {
+            auditLog.setErrorMessage(exception.getMessage());
+            auditLog.setHttpStatus(500); // Default error status
+        } else {
+            auditLog.setHttpStatus(200); // Default success status
+        }
+        
+        // Set execution time
+        auditLog.setExecutionTime(executionTime);
+        
+        // Additional metadata
+        auditLog.setServiceName("backend-service");
+        auditLog.setCorrelationId(getOrCreateCorrelationId(request));
+        auditLog.setSessionId(request.getSession(false) != null ? 
+                            request.getSession().getId() : null);
+        
+        // Store headers (optional)
+        auditLog.setRequestHeaders(getHeadersAsString(request));
+        
+        return auditLog;
+    }
+    
+    private String getCurrentUsername() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.isAuthenticated()) {
+            return authentication.getName();
+        }
+        return null;
+    }
+    
+    private String getClientIp(HttpServletRequest request) {
+        String xfHeader = request.getHeader("X-Forwarded-For");
+        if (StringUtils.hasText(xfHeader)) {
+            return xfHeader.split(",")[0];
+        }
+        return request.getRemoteAddr();
+    }
+    
+    private String getOrCreateCorrelationId(HttpServletRequest request) {
+        String correlationId = request.getHeader("X-Correlation-ID");
+        if (!StringUtils.hasText(correlationId)) {
+            correlationId = UUID.randomUUID().toString();
+        }
+        return correlationId;
+    }
+    
+    private String getHeadersAsString(HttpServletRequest request) {
+        Map<String, String> headers = new HashMap<>();
+        request.getHeaderNames().asIterator()
+               .forEachRemaining(headerName -> 
+                   headers.put(headerName, request.getHeader(headerName)));
+        
+        try {
+            return objectMapper.writeValueAsString(headers);
+        } catch (JsonProcessingException e) {
+            return "{}";
+        }
+    }
+    
+    private String maskSensitiveData(String json, String endpoint) {
+        if (!StringUtils.hasText(json)) {
+            return json;
+        }
+        
+        try {
+            // Simple masking for sensitive endpoints
+            if (endpoint.contains("/auth") || endpoint.contains("/login")) {
+                json = json.replaceAll("\"password\":\"[^\"]*\"", "\"password\":\"*****\"");
+                json = json.replaceAll("\"token\":\"[^\"]*\"", "\"token\":\"*****\"");
+                json = json.replaceAll("\"accessToken\":\"[^\"]*\"", "\"accessToken\":\"*****\"");
+                json = json.replaceAll("\"refreshToken\":\"[^\"]*\"", "\"refreshToken\":\"*****\"");
+            }
+            
+            // Mask email in certain contexts
+            if (endpoint.contains("/users") || endpoint.contains("/profile")) {
+                json = json.replaceAll("\"email\":\"[^\"]*\"", "\"email\":\"***@***.***\"");
+            }
+            
+            return json;
+        } catch (Exception e) {
+            log.warn("Failed to mask sensitive data", e);
+            return json;
+        }
+    }
+    
+    public String getRequestBodyFromCache(ContentCachingRequestWrapper request) {
+        try {
+            byte[] buf = request.getContentAsByteArray();
+            if (buf.length > 0) {
+                return new String(buf, request.getCharacterEncoding());
+            }
+        } catch (UnsupportedEncodingException e) {
+            log.error("Failed to read cached request body", e);
+        }
+        return null;
+    }
+    
+    public String getResponseBodyFromCache(ContentCachingResponseWrapper response) {
+        try {
+            byte[] buf = response.getContentAsByteArray();
+            if (buf.length > 0) {
+                return new String(buf, response.getCharacterEncoding());
+            }
+        } catch (UnsupportedEncodingException e) {
+            log.error("Failed to read cached response body", e);
+        }
+        return null;
+    }
+    
+    // Statistics methods
+    public Map<String, Object> getAuditStatistics(LocalDateTime startDate, LocalDateTime endDate) {
+        Map<String, Object> stats = new HashMap<>();
+        
+        if (startDate == null) startDate = LocalDateTime.now().minusDays(30);
+        if (endDate == null) endDate = LocalDateTime.now();
+        
+        Long totalRequests = auditLogRepository.countSince(startDate);
+        List<Object[]> statusCounts = auditLogRepository.getStatusCount(startDate, endDate);
+        
+        stats.put("period", Map.of("start", startDate, "end", endDate));
+        stats.put("totalRequests", totalRequests);
+        stats.put("statusDistribution", statusCounts);
+        
+        return stats;
+    }
+}
+
+
+AuditAspect.java
+
+package com.example.auditdemo.aspect;
+
+import com.example.auditdemo.entity.AuditLog;
+import com.example.auditdemo.service.AuditLogService;
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.aspectj.lang.ProceedingJoinPoint;
+import org.aspectj.lang.annotation.Around;
+import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.reflect.MethodSignature;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Component;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+
+import java.lang.reflect.Method;
+import java.util.Arrays;
+
+@Aspect
+@Component
+@RequiredArgsConstructor
+@Slf4j
+public class AuditAspect {
+    
+    private final AuditLogService auditLogService;
+    
+    @Around("@within(org.springframework.web.bind.annotation.RestController) || " +
+            "@annotation(org.springframework.web.bind.annotation.RequestMapping) || " +
+            "@annotation(org.springframework.web.bind.annotation.GetMapping) || " +
+            "@annotation(org.springframework.web.bind.annotation.PostMapping) || " +
+            "@annotation(org.springframework.web.bind.annotation.PutMapping) || " +
+            "@annotation(org.springframework.web.bind.annotation.DeleteMapping) || " +
+            "@annotation(org.springframework.web.bind.annotation.PatchMapping)")
+    public Object auditMethod(ProceedingJoinPoint joinPoint) throws Throwable {
+        
+        // Skip if no HTTP request context
+        ServletRequestAttributes attributes = 
+            (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        
+        if (attributes == null) {
+            return joinPoint.proceed();
+        }
+        
+        HttpServletRequest request = attributes.getRequest();
+        long startTime = System.currentTimeMillis();
+        
+        Object response = null;
+        Exception exception = null;
+        
+        try {
+            response = joinPoint.proceed();
+            return response;
+        } catch (Exception e) {
+            exception = e;
+            throw e;
+        } finally {
+            long executionTime = System.currentTimeMillis() - startTime;
+            try {
+                logAudit(joinPoint, request, response, executionTime, exception);
+            } catch (Exception e) {
+                log.error("Failed to log audit", e);
+                // Don't throw exception from audit logging
+            }
+        }
+    }
+    
+    private void logAudit(ProceedingJoinPoint joinPoint, 
+                         HttpServletRequest request, 
+                         Object response, 
+                         long executionTime, 
+                         Exception exception) {
+        
+        try {
+            // Get request body from joinpoint arguments
+            Object requestBody = extractRequestBody(joinPoint.getArgs());
+            
+            // Extract actual response body from ResponseEntity if needed
+            Object responseBody = response;
+            if (response instanceof ResponseEntity) {
+                responseBody = ((ResponseEntity<?>) response).getBody();
+            }
+            
+            // Create and save audit log
+            AuditLog auditLog = auditLogService.createAuditLog(
+                request, requestBody, responseBody, executionTime, exception
+            );
+            
+            // Set actual HTTP status
+            if (response instanceof ResponseEntity) {
+                auditLog.setHttpStatus(((ResponseEntity<?>) response).getStatusCode().value());
+            } else if (exception != null) {
+                // Try to extract status from exception
+                HttpStatus status = extractHttpStatusFromException(exception);
+                auditLog.setHttpStatus(status.value());
+            }
+            
+            // Save asynchronously for better performance
+            auditLogService.saveAsync(auditLog);
+            
+        } catch (Exception e) {
+            log.error("Error in audit logging", e);
+        }
+    }
+    
+    private Object extractRequestBody(Object[] args) {
+        if (args == null || args.length == 0) {
+            return null;
+        }
+        
+        // Look for @RequestBody annotated parameter
+        MethodSignature signature = (MethodSignature) Arrays.stream(joinPoint.getArgs())
+            .filter(arg -> arg != null && !isHttpType(arg.getClass()))
+            .findFirst()
+            .orElse(null);
+        
+        return requestBody;
+    }
+    
+    private boolean isHttpType(Class<?> clazz) {
+        return clazz.getName().startsWith("jakarta.servlet") ||
+               clazz.getName().startsWith("org.springframework.web");
+    }
+    
+    private HttpStatus extractHttpStatusFromException(Exception exception) {
+        // You can implement specific exception to HTTP status mapping here
+        // For now, return 500 for all exceptions
+        return HttpStatus.INTERNAL_SERVER_ERROR;
+    }
+}
+
+AuditLogFilter.java
+package com.example.auditdemo.filter;
+
+import com.example.auditdemo.entity.AuditLog;
+import com.example.auditdemo.service.AuditLogService;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.ContentCachingRequestWrapper;
+import org.springframework.web.util.ContentCachingResponseWrapper;
+
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.List;
+
+@Component
+@RequiredArgsConstructor
+@Slf4j
+public class AuditLogFilter extends OncePerRequestFilter {
+    
+    private final AuditLogService auditLogService;
+    
+    // Exclude these paths from audit logging
+    private static final List<String> EXCLUDE_PATHS = Arrays.asList(
+        "/actuator/health",
+        "/actuator/prometheus",
+        "/swagger-ui",
+        "/v3/api-docs",
+        "/favicon.ico"
+    );
+    
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, 
+                                   HttpServletResponse response, 
+                                   FilterChain filterChain) throws ServletException, IOException {
+        
+        String path = request.getRequestURI();
+        
+        // Skip excluded paths
+        if (shouldSkip(path)) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+        
+        long startTime = System.currentTimeMillis();
+        
+        // Wrap request/response to cache content
+        ContentCachingRequestWrapper wrappedRequest = new ContentCachingRequestWrapper(request);
+        ContentCachingResponseWrapper wrappedResponse = new ContentCachingResponseWrapper(response);
+        
+        Exception exception = null;
+        
+        try {
+            filterChain.doFilter(wrappedRequest, wrappedResponse);
+        } catch (Exception e) {
+            exception = e;
+            throw e;
+        } finally {
+            long executionTime = System.currentTimeMillis() - startTime;
+            try {
+                // Log audit using cached request/response
+                logAudit(wrappedRequest, wrappedResponse, executionTime, exception);
+            } catch (Exception e) {
+                log.error("Failed to log audit in filter", e);
+            }
+            
+            // Copy response body back to original response
+            wrappedResponse.copyBodyToResponse();
+        }
+    }
+    
+    private boolean shouldSkip(String path) {
+        return EXCLUDE_PATHS.stream().anyMatch(path::startsWith);
+    }
+    
+    private void logAudit(ContentCachingRequestWrapper request, 
+                         ContentCachingResponseWrapper response, 
+                         long executionTime, 
+                         Exception exception) {
+        
+        try {
+            // Extract request/response bodies from cache
+            String requestBody = auditLogService.getRequestBodyFromCache(request);
+            String responseBody = auditLogService.getResponseBodyFromCache(response);
+            
+            // Create audit log
+            AuditLog auditLog = auditLogService.createAuditLog(
+                request, requestBody, responseBody, executionTime, exception
+            );
+            
+            // Set HTTP status from response
+            auditLog.setHttpStatus(response.getStatus());
+            
+            // Save asynchronously
+            auditLogService.saveAsync(auditLog);
+            
+        } catch (Exception e) {
+            log.error("Error in filter audit logging", e);
+        }
+    }
+}
+
+AuditLogController.java
+package com.example.auditdemo.controller;
+
+import com.example.auditdemo.dto.AuditLogDTO;
+import com.example.auditdemo.entity.AuditLog;
+import com.example.auditdemo.service.AuditLogService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
+
+import java.time.LocalDateTime;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/audit")
+@RequiredArgsConstructor
+@Tag(name = "Audit Logs", description = "Audit Log Management APIs")
+public class AuditLogController {
+    
+    private final AuditLogService auditLogService;
+    
+    @GetMapping("/logs")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('AUDITOR')")
+    @Operation(summary = "Get paginated audit logs")
+    public ResponseEntity<Page<AuditLog>> getAuditLogs(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size,
+            @RequestParam(defaultValue = "timestamp,desc") String[] sort) {
+        
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Order.desc("timestamp")));
+        Page<AuditLog> auditLogs = auditLogService.getAllAuditLogs(pageable);
+        return ResponseEntity.ok(auditLogs);
+    }
+    
+    @GetMapping("/search")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('AUDITOR')")
+    @Operation(summary = "Search audit logs with filters")
+    public ResponseEntity<Page<AuditLog>> searchAuditLogs(
+            @RequestParam(required = false) String username,
+            @RequestParam(required = false) String endpoint,
+            @RequestParam(required = false) String method,
+            @RequestParam(required = false) Integer status,
+            @RequestParam(required = false) 
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startDate,
+            @RequestParam(required = false) 
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endDate,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size) {
+        
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Order.desc("timestamp")));
+        Page<AuditLog> auditLogs = auditLogService.searchAuditLogs(
+            username, endpoint, method, status, startDate, endDate, pageable);
+        
+        return ResponseEntity.ok(auditLogs);
+    }
+    
+    @GetMapping("/stats")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('AUDITOR')")
+    @Operation(summary = "Get audit statistics")
+    public ResponseEntity<Map<String, Object>> getAuditStatistics(
+            @RequestParam(required = false) 
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startDate,
+            @RequestParam(required = false) 
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endDate) {
+        
+        Map<String, Object> stats = auditLogService.getAuditStatistics(startDate, endDate);
+        return ResponseEntity.ok(stats);
+    }
+    
+    @GetMapping("/logs/{id}")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('AUDITOR')")
+    @Operation(summary = "Get audit log by ID")
+    public ResponseEntity<AuditLog> getAuditLogById(@PathVariable Long id) {
+        return auditLogService.getAuditLogById(id)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+    
+    @DeleteMapping("/logs/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Delete audit log by ID")
+    public ResponseEntity<Void> deleteAuditLog(@PathVariable Long id) {
+        auditLogService.deleteAuditLog(id);
+        return ResponseEntity.noContent().build();
+    }
+    
+    @GetMapping("/user/{username}")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('AUDITOR') or #username == authentication.name")
+    @Operation(summary = "Get audit logs for a specific user")
+    public ResponseEntity<Page<AuditLog>> getAuditLogsByUser(
+            @PathVariable String username,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size) {
+        
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Order.desc("timestamp")));
+        Page<AuditLog> auditLogs = auditLogService.getAuditLogsByUsername(username, pageable);
+        return ResponseEntity.ok(auditLogs);
+    }
+}
+
+
+AsyncConfig.java
+
+package com.example.auditdemo.config;
+
+import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.annotation.EnableAsync;
+
+@Configuration
+@EnableAsync
+
+
+
+public class AsyncConfig {
+    // Async configuration is enabled
+}
+
+WebConfig.java
+package com.example.auditdemo.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.servlet.config.annotation.CorsRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+@Configuration
+public class WebConfig implements WebMvcConfigurer {
+    
+    @Override
+    public void addCorsMappings(CorsRegistry registry) {
+        registry.addMapping("/api/**")
+                .allowedOrigins("http://localhost:3000")
+                .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+                .allowedHeaders("*")
+                .allowCredentials(true);
+    }
+}
+
+SecurityConfig.java
+
+package com.example.auditdemo.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.SecurityFilterChain;
+
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity
+public class SecurityConfig {
+    
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        http
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(session -> 
+                session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers("/api/auth/**", "/actuator/health").permitAll()
+                .requestMatchers("/api/audit/**").hasAnyRole("ADMIN", "AUDITOR")
+                .anyRequest().authenticated()
+            );
+        
+        return http.build();
+    }
+}
+
+
+application.yml
+spring:
+  application:
+    name: audit-demo
+  
+  datasource:
+    url: jdbc:postgresql://localhost:5432/auditdb
+    username: postgres
+    password: password
+    driver-class-name: org.postgresql.Driver
+  
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+    show-sql: false
+  
+  sql:
+    init:
+      platform: postgresql
+  
+logging:
+  level:
+    com.example.auditdemo: DEBUG
+    org.springframework.web.filter.CommonsRequestLoggingFilter: DEBUG
+
+audit:
+  enabled: true
+  exclude-paths: /health,/metrics,/actuator/**,/swagger-**,/favicon.ico
+  max-request-size: 10000
+  max-response-size: 10000
+  async-enabled: true
+
+server:
+  servlet:
+    context-path: /
+  port: 8080
+
+
+CREATE TABLE audit_logs (
+    id BIGSERIAL PRIMARY KEY,
+    username VARCHAR(255) NOT NULL,
+    api_endpoint VARCHAR(1000) NOT NULL,
+    http_method VARCHAR(10) NOT NULL,
+    request_body TEXT,
+    response_body TEXT,
+    http_status INTEGER NOT NULL,
+    client_ip VARCHAR(45),
+    user_agent VARCHAR(1000),
+    execution_time BIGINT,
+    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    error_message TEXT,
+    service_name VARCHAR(100),
+    correlation_id VARCHAR(100),
+    session_id VARCHAR(100),
+    request_headers TEXT
+);
+
+-- Create indexes for better query performance
+CREATE INDEX idx_audit_logs_username ON audit_logs(username);
+CREATE INDEX idx_audit_logs_timestamp ON audit_logs(timestamp);
+CREATE INDEX idx_audit_logs_endpoint ON audit_logs(api_endpoint);
+CREATE INDEX idx_audit_logs_status ON audit_logs(http_status);
+CREATE INDEX idx_audit_logs_correlation ON audit_logs(correlation_id);
