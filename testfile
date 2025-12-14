@@ -1,1 +1,48 @@
 
+// components/DomainBasedContent.jsx
+import React, { useState, useEffect } from 'react';
+
+const DomainBasedContent = () => {
+  const [domain, setDomain] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Use a CORS proxy service to check the URL
+    const checkUrl = async () => {
+      try {
+        // Using a public CORS proxy
+        const proxyUrl = 'https://api.allorigins.win/get?url=';
+        const targetUrl = encodeURIComponent('https://xyz.com');
+        
+        const response = await fetch(`${proxyUrl}${targetUrl}`);
+        const data = await response.json();
+        
+        // The proxy returns the final URL in the response
+        // We need to extract it from the headers or response
+        const finalUrl = data.url || 'https://xyz.com';
+        const domainName = new URL(finalUrl).hostname;
+        
+        setDomain(domainName);
+      } catch (error) {
+        console.log('Error:', error);
+        setDomain('unknown');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    checkUrl();
+  }, []);
+
+  if (loading) return <div>Resolving external domain...</div>;
+
+  return (
+    <div>
+      <p><strong>External URL resolves to:</strong> {domain}</p>
+      {domain.includes('.a.com') && <div>Show Site A specific content</div>}
+      {domain.includes('.b.com') && <div>Show Site B specific content</div>}
+    </div>
+  );
+};
+
+export default DomainBasedContent;
