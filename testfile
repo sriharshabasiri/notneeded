@@ -1,1 +1,325 @@
+// components/DomainBasedContent.jsx
+import React, { useState, useEffect } from 'react';
 
+const DomainBasedContent = () => {
+  const [domainInfo, setDomainInfo] = useState({
+    resolvedDomain: null,
+    finalUrl: null,
+    isDomainA: false,
+    isDomainB: false,
+    isLoading: true,
+    error: null
+  });
+
+  useEffect(() => {
+    const detectDomain = async () => {
+      try {
+        // Method 1: Use a CORS proxy to bypass browser restrictions
+        const corsProxy = 'https://corsproxy.io/?';
+        const targetUrl = 'https://xyz.com';
+        
+        console.log('Testing URL:', targetUrl);
+        
+        // Try HEAD request first (faster, less data)
+        const response = await fetch(`${corsProxy}${encodeURIComponent(targetUrl)}`, {
+          method: 'HEAD',
+          redirect: 'follow',
+          mode: 'cors',
+          headers: {
+            'Accept': '*/*',
+            'User-Agent': 'Mozilla/5.0 (compatible; DomainDetector/1.0)'
+          }
+        });
+
+        // Get the final URL after redirects
+        let finalUrl = response.url;
+        console.log('Response URL:', finalUrl);
+        
+        // Remove proxy prefix to get actual URL
+        if (finalUrl.startsWith('https://corsproxy.io/?')) {
+          finalUrl = decodeURIComponent(finalUrl.split('?')[1]);
+        }
+
+        // Extract domain from the URL
+        let domain;
+        try {
+          // Create URL object to parse domain
+          const urlObj = new URL(finalUrl);
+          domain = urlObj.hostname;
+        } catch (error) {
+          // If URL parsing fails, extract domain manually
+          const match = finalUrl.match(/https?:\/\/([^\/]+)/);
+          domain = match ? match[1] : finalUrl;
+        }
+
+        console.log('Resolved Domain:', domain);
+        
+        // Determine which domain we're on
+        // Check for various possible domain patterns
+        const domainPatterns = {
+          isDomainA: [
+            '.a.com',
+            'xyz.a.com',
+            'a-xyz.com',
+            'xyz-a.com'
+          ],
+          isDomainB: [
+            '.b.com', 
+            'xyz.b.com',
+            'b-xyz.com',
+            'xyz-b.com'
+          ]
+        };
+
+        const isDomainA = domainPatterns.isDomainA.some(pattern => 
+          domain.includes(pattern) || domain === pattern.replace('.', '')
+        );
+        
+        const isDomainB = domainPatterns.isDomainB.some(pattern => 
+          domain.includes(pattern) || domain === pattern.replace('.', '')
+        );
+
+        setDomainInfo({
+          resolvedDomain: domain,
+          finalUrl: finalUrl,
+          isDomainA,
+          isDomainB,
+          isLoading: false,
+          error: null
+        });
+
+      } catch (error) {
+        console.error('Error detecting domain:', error);
+        
+        // Fallback: Try alternative method using image tag
+        try {
+          const fallbackResult = await detectDomainWithImage();
+          setDomainInfo(fallbackResult);
+        } catch (fallbackError) {
+          // Last resort: Use current window location
+          const currentDomain = window.location.hostname;
+          const isDomainA = currentDomain.includes('.a.com');
+          const isDomainB = currentDomain.includes('.b.com');
+          
+          setDomainInfo({
+            resolvedDomain: currentDomain,
+            finalUrl: window.location.href,
+            isDomainA,
+            isDomainB,
+            isLoading: false,
+            error: `Direct detection failed: ${error.message}. Using current domain.`
+          });
+        }
+      }
+    };
+
+    // Alternative method using image loading (bypasses some CORS restrictions)
+    const detectDomainWithImage = () => {
+      return new Promise((resolve, reject) => {
+        const targetUrl = 'https://xyz.com';
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        document.body.appendChild(iframe);
+        
+        iframe.onload = function() {
+          try {
+            const finalUrl = iframe.contentWindow.location.href;
+            const domain = new URL(finalUrl).hostname;
+            
+            const isDomainA = domain.includes('.a.com');
+            const isDomainB = domain.includes('.b.com');
+            
+            document.body.removeChild(iframe);
+            
+            resolve({
+              resolvedDomain: domain,
+              finalUrl: finalUrl,
+              isDomainA,
+              isDomainB,
+              isLoading: false,
+              error: null
+            });
+          } catch (error) {
+            document.body.removeChild(iframe);
+            reject(error);
+          }
+        };
+        
+        iframe.onerror = function() {
+          document.body.removeChild(iframe);
+          reject(new Error('Iframe failed to load'));
+        };
+        
+        iframe.src = targetUrl;
+        
+        // Timeout after 10 seconds
+        setTimeout(() => {
+          if (iframe.parentNode) {
+            document.body.removeChild(iframe);
+            reject(new Error('Detection timeout'));
+          }
+        }, 10000);
+      });
+    };
+
+    detectDomain();
+  }, []);
+
+  if (domainInfo.isLoading) {
+    return (
+      <div className="loading-state">
+        <div className="spinner"></div>
+        <div className="loading-text">
+          <h3>Detecting Domain Resolution</h3>
+          <p>Checking where https://xyz.com redirects to...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="domain-content">
+      {/* Display detection results */}
+      <div className="detection-results">
+        <h3>Domain Detection Results</h3>
+        <div className="result-details">
+          <p><strong>Original URL:</strong> https://xyz.com</p>
+          <p><strong>Resolved to:</strong> {domainInfo.finalUrl}</p>
+          <p><strong>Domain:</strong> 
+            <span className={`domain-tag ${domainInfo.isDomainA ? 'domain-a' : domainInfo.isDomainB ? 'domain-b' : 'unknown'}`}>
+              {domainInfo.resolvedDomain}
+            </span>
+          </p>
+        </div>
+        
+        {domainInfo.error && (
+          <div className="detection-warning">
+            <p>⚠️ {domainInfo.error}</p>
+          </div>
+        )}
+      </div>
+
+      {/* Display content based on detected domain */}
+      {domainInfo.isDomainA && (
+        <div className="domain-a-content">
+          <div className="domain-header">
+            <span className="domain-badge badge-a">Site A</span>
+            <h1>Welcome to Site A</h1>
+            <p className="domain-subtitle">
+              You are accessing the premium experience (xyz.a.com)
+            </p>
+          </div>
+          
+          <div className="domain-features">
+            <h2>Available Features:</h2>
+            <ul>
+              <li>Advanced analytics and reporting</li>
+              <li>Priority customer support</li>
+              <li>Custom workflow configurations</li>
+              <li>Unlimited data storage</li>
+              <li>API access with high rate limits</li>
+            </ul>
+          </div>
+          
+          <div className="domain-actions">
+            <button className="btn btn-primary btn-a">
+              Access Premium Dashboard
+            </button>
+            <button className="btn btn-secondary">
+              View Documentation
+            </button>
+          </div>
+          
+          <div className="domain-stats">
+            <div className="stat">
+              <div className="stat-value">99.9%</div>
+              <div className="stat-label">Uptime SLA</div>
+            </div>
+            <div className="stat">
+              <div className="stat-value">24/7</div>
+              <div className="stat-label">Support</div>
+            </div>
+            <div className="stat">
+              <div className="stat-value">Enterprise</div>
+              <div className="stat-label">Security</div>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {domainInfo.isDomainB && (
+        <div className="domain-b-content">
+          <div className="domain-header">
+            <span className="domain-badge badge-b">Site B</span>
+            <h1>Welcome to Site B</h1>
+            <p className="domain-subtitle">
+              You are accessing the standard experience (xyz.b.com)
+            </p>
+          </div>
+          
+          <div className="domain-features">
+            <h2>Available Features:</h2>
+            <ul>
+              <li>Basic analytics dashboard</li>
+              <li>Standard customer support</li>
+              <li>Pre-configured workflows</li>
+              <li>Limited data storage</li>
+              <li>Basic API access</li>
+            </ul>
+          </div>
+          
+          <div className="domain-actions">
+            <button className="btn btn-primary btn-b">
+              Access Standard Dashboard
+            </button>
+            <button className="btn btn-secondary">
+              View Tutorials
+            </button>
+          </div>
+          
+          <div className="domain-stats">
+            <div className="stat">
+              <div className="stat-value">99.5%</div>
+              <div className="stat-label">Uptime SLA</div>
+            </div>
+            <div className="stat">
+              <div className="stat-value">Business Hours</div>
+              <div className="stat-label">Support</div>
+            </div>
+            <div className="stat">
+              <div className="stat-value">Standard</div>
+              <div className="stat-label">Security</div>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {!domainInfo.isDomainA && !domainInfo.isDomainB && (
+        <div className="unknown-domain">
+          <div className="unknown-header">
+            <span className="domain-badge badge-unknown">Unknown</span>
+            <h1>Unknown Domain</h1>
+            <p>Unable to determine the target domain type</p>
+          </div>
+          
+          <div className="unknown-info">
+            <p><strong>Detected Domain:</strong> {domainInfo.resolvedDomain}</p>
+            <p><strong>Final URL:</strong> {domainInfo.finalUrl}</p>
+            <p>This domain doesn't match expected patterns for Site A or Site B.</p>
+          </div>
+          
+          <div className="unknown-actions">
+            <button 
+              className="btn btn-secondary"
+              onClick={() => window.location.reload()}
+            >
+              Retry Detection
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default DomainBasedContent;
