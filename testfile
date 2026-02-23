@@ -1,1 +1,2 @@
-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
+in one of my RAG bot which is from private gpt, i have an api /_upload_file which has to be called from gradio client, where client would be mentioned and client.preditct( file path, api_name) will be passed, that would ingest the file in to vector DB and there after can be queried form RAG model
+am looking to ingest some data, which would be in various formats, json or any other, instead of uploading it as file, how can i try ingesting that data to vector DB
