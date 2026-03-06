@@ -1,1 +1,6 @@
-
+./bin/mta-cli analyze \
+--input /Users/harsha/projects/banking-app \
+--input /Users/harsha/projects/banking-app/libs \
+--output /Users/harsha/mta-report \
+--source jdk8 \
+--target jdk17
