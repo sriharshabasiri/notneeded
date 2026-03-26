@@ -1,16 +1,1 @@
-am planning to prepare a deck, ppt for my leadership to present the technical details of banking platform portal - instant ops, which basically has a react app front end, python fast api backend service, ansible api wrapper, ansible controller node and all the platform hosts, what are best ways to present this with technical diagram, can some references be provided or if we have any ai tools which generate the technical architecture diagrams, detailing about the advantages of this approach how much time platform is able to save and perform the operations faster
 
-under instant ops you basically have 4 menus
-Quick strike for any adhoc command execution, for all regions execution or selected environments or all jvms or core execution
-user will be able to upload any script also and perform execution 
-enhanced restrictions for ensuring proper controls on application directories
-audit of all api calls enabled, capturing the requests/response
-multiple commands execution, copy of the ouput for all hosts and download
-
-next you have platform fleet status for Dev, ESQM and Prod, which basically gets the versions, status of all softwares, agents, process from all servers and present in a single view
-
-similarly you have finacle service status which has around 20 services, that would be presented in a single view for all servers in Dev or ESQM or PROD regions
-
-then you have JVM certificate status menu which pulls the cert details alias, common name, expiry dates of all certificates in the selected region and mentions how many are expired or going to expire soon
-
-these are on a high level, let me know what best way i can present this, give me good bullet points
