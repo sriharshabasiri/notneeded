@@ -1,1 +1,1 @@
-
+ansible all -m shell -a "find /home \( -type f -o -type d \) -perm 0777 2>/dev/null" -i inventory
