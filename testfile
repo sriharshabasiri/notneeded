@@ -1,1 +1,1 @@
-git log --all --reverse --format="%H | %an | %ae | %ad | %s" --name-only
+
