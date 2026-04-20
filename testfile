@@ -1,1 +1,752 @@
 
+#!/usr/bin/env python3
+"""
+compare_for_frontend.py - Generate structured JSON response for frontend consumption
+Returns detailed file comparison data with source/target pairings
+"""
+
+import json
+import argparse
+import os
+from datetime import datetime
+from typing import Dict, List, Any, Optional
+from collections import defaultdict
+
+class FrontendComparer:
+    def __init__(self, source_server: str = None, target_server: str = None):
+        self.servers = {}
+        self.source_server = source_server
+        self.target_server = target_server
+        self.all_files = set()
+        
+    def load_manifests(self, manifest_paths: List[str]) -> Dict[str, Dict]:
+        """Load all manifest files"""
+        for path in manifest_paths:
+            with open(path, 'r') as f:
+                data = json.load(f)
+                server_name = data['metadata']['server'].get('hostname', os.path.basename(path))
+                self.servers[server_name] = data
+                self.all_files.update(data['manifest'].keys())
+        
+        # Auto-detect source and target if not specified
+        if not self.source_server or not self.target_server:
+            server_list = list(self.servers.keys())
+            if len(server_list) >= 2:
+                self.source_server = self.source_server or server_list[0]
+                self.target_server = self.target_server or server_list[1]
+        
+        return self.servers
+    
+    def generate_frontend_response(self) -> Dict[str, Any]:
+        """
+        Generate structured response for frontend consumption
+        Returns format suitable for React/Vue/Angular components
+        """
+        if not self.source_server or not self.target_server:
+            return {"error": "Source and target servers must be specified"}
+        
+        if self.source_server not in self.servers:
+            return {"error": f"Source server '{self.source_server}' not found in manifests"}
+        
+        if self.target_server not in self.servers:
+            return {"error": f"Target server '{self.target_server}' not found in manifests"}
+        
+        source_data = self.servers[self.source_server]
+        target_data = self.servers[self.target_server]
+        
+        source_manifest = source_data['manifest']
+        target_manifest = target_data['manifest']
+        
+        # Build the response structure
+        response = {
+            "metadata": {
+                "comparison_id": f"cmp_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                "timestamp": datetime.now().isoformat(),
+                "timestamp_unix": datetime.now().timestamp(),
+                "source": {
+                    "server": self.source_server,
+                    "hostname": source_data['metadata']['server'].get('hostname', self.source_server),
+                    "role": source_data['metadata']['server'].get('role', 'unknown'),
+                    "scan_time": source_data['metadata']['scan_info']['timestamp'],
+                    "total_files": source_data['metadata']['statistics']['processed_files'],
+                    "ip_address": source_data['metadata']['server'].get('ip_address')
+                },
+                "target": {
+                    "server": self.target_server,
+                    "hostname": target_data['metadata']['server'].get('hostname', self.target_server),
+                    "role": target_data['metadata']['server'].get('role', 'unknown'),
+                    "scan_time": target_data['metadata']['scan_info']['timestamp'],
+                    "total_files": target_data['metadata']['statistics']['processed_files'],
+                    "ip_address": target_data['metadata']['server'].get('ip_address')
+                }
+            },
+            "summary": {
+                "total_files_compared": 0,
+                "matching_files": 0,
+                "mismatched_files": 0,
+                "files_only_in_source": 0,
+                "files_only_in_target": 0,
+                "metadata_differences": {
+                    "owner_mismatch": 0,
+                    "group_mismatch": 0,
+                    "permission_mismatch": 0,
+                    "timestamp_mismatch": 0,
+                    "size_mismatch": 0
+                }
+            },
+            "files": {
+                "matching": [],  # Files identical in both
+                "mismatched": [],  # Files present in both but different
+                "only_in_source": [],  # Files only on source server
+                "only_in_target": []  # Files only on target server
+            },
+            "statistics": {
+                "by_directory": {},
+                "by_extension": {},
+                "by_owner": {}
+            }
+        }
+        
+        # Process all files
+        all_paths = set(source_manifest.keys()) | set(target_manifest.keys())
+        
+        for file_path in sorted(all_paths):
+            source_file = source_manifest.get(file_path)
+            target_file = target_manifest.get(file_path)
+            
+            # File exists in both locations
+            if source_file is not None and target_file is not None:
+                file_entry = self._create_file_entry(
+                    file_path, 
+                    source_file, 
+                    target_file,
+                    source_data['metadata']['server'].get('role', 'source'),
+                    target_data['metadata']['server'].get('role', 'target')
+                )
+                
+                if file_entry['match_status']['checksum_match']:
+                    response['files']['matching'].append(file_entry)
+                    response['summary']['matching_files'] += 1
+                else:
+                    response['files']['mismatched'].append(file_entry)
+                    response['summary']['mismatched_files'] += 1
+                    
+                    # Track metadata differences
+                    if not file_entry['match_status']['owner_match']:
+                        response['summary']['metadata_differences']['owner_mismatch'] += 1
+                    if not file_entry['match_status']['group_match']:
+                        response['summary']['metadata_differences']['group_mismatch'] += 1
+                    if not file_entry['match_status']['permission_match']:
+                        response['summary']['metadata_differences']['permission_mismatch'] += 1
+                    if not file_entry['match_status']['timestamp_match']:
+                        response['summary']['metadata_differences']['timestamp_mismatch'] += 1
+                    if not file_entry['match_status']['size_match']:
+                        response['summary']['metadata_differences']['size_mismatch'] += 1
+                
+                # Update statistics
+                self._update_statistics(response['statistics'], file_path, source_file)
+                
+            # File only in source
+            elif source_file is not None:
+                file_entry = self._create_single_file_entry(
+                    file_path, 
+                    source_file, 
+                    'source',
+                    source_data['metadata']['server'].get('role', 'source')
+                )
+                response['files']['only_in_source'].append(file_entry)
+                response['summary']['files_only_in_source'] += 1
+                
+            # File only in target
+            else:
+                file_entry = self._create_single_file_entry(
+                    file_path, 
+                    target_file, 
+                    'target',
+                    target_data['metadata']['server'].get('role', 'target')
+                )
+                response['files']['only_in_target'].append(file_entry)
+                response['summary']['files_only_in_target'] += 1
+        
+        response['summary']['total_files_compared'] = len(response['files']['matching']) + len(response['files']['mismatched'])
+        
+        # Calculate match percentage
+        if response['summary']['total_files_compared'] > 0:
+            response['summary']['match_percentage'] = round(
+                (response['summary']['matching_files'] / response['summary']['total_files_compared']) * 100, 2
+            )
+        else:
+            response['summary']['match_percentage'] = 0
+        
+        return response
+    
+    def _create_file_entry(self, path: str, source_data: Dict, target_data: Dict, 
+                          source_role: str, target_role: str) -> Dict[str, Any]:
+        """Create a file entry for files present in both source and target"""
+        
+        # Extract checksums
+        source_checksum = source_data.get('checksum') if isinstance(source_data, dict) else source_data
+        target_checksum = target_data.get('checksum') if isinstance(target_data, dict) else target_data
+        
+        # Build the file entry
+        entry = {
+            "path": path,
+            "filename": os.path.basename(path),
+            "directory": os.path.dirname(path),
+            "extension": os.path.splitext(path)[1] or None,
+            "source": {
+                "server_role": source_role,
+                "checksum": source_checksum,
+                "size": source_data.get('size') if isinstance(source_data, dict) else None,
+                "size_human": self._human_readable_size(source_data.get('size')) if isinstance(source_data, dict) else None,
+                "owner": source_data.get('owner') if isinstance(source_data, dict) else None,
+                "group": source_data.get('group') if isinstance(source_data, dict) else None,
+                "permissions": source_data.get('mode') if isinstance(source_data, dict) else None,
+                "permissions_octal": f"0o{source_data.get('mode')}" if isinstance(source_data, dict) and source_data.get('mode') else None,
+                "modified_timestamp": source_data.get('mtime') if isinstance(source_data, dict) else None,
+                "modified_datetime": source_data.get('mtime_iso') if isinstance(source_data, dict) else None,
+                "created_timestamp": source_data.get('ctime') if isinstance(source_data, dict) else None,
+                "created_datetime": source_data.get('ctime_iso') if isinstance(source_data, dict) else None,
+                "inode": source_data.get('inode') if isinstance(source_data, dict) else None
+            },
+            "target": {
+                "server_role": target_role,
+                "checksum": target_checksum,
+                "size": target_data.get('size') if isinstance(target_data, dict) else None,
+                "size_human": self._human_readable_size(target_data.get('size')) if isinstance(target_data, dict) else None,
+                "owner": target_data.get('owner') if isinstance(target_data, dict) else None,
+                "group": target_data.get('group') if isinstance(target_data, dict) else None,
+                "permissions": target_data.get('mode') if isinstance(target_data, dict) else None,
+                "permissions_octal": f"0o{target_data.get('mode')}" if isinstance(target_data, dict) and target_data.get('mode') else None,
+                "modified_timestamp": target_data.get('mtime') if isinstance(target_data, dict) else None,
+                "modified_datetime": target_data.get('mtime_iso') if isinstance(target_data, dict) else None,
+                "created_timestamp": target_data.get('ctime') if isinstance(target_data, dict) else None,
+                "created_datetime": target_data.get('ctime_iso') if isinstance(target_data, dict) else None,
+                "inode": target_data.get('inode') if isinstance(target_data, dict) else None
+            },
+            "match_status": {
+                "checksum_match": source_checksum == target_checksum,
+                "size_match": source_data.get('size') == target_data.get('size') if isinstance(source_data, dict) and isinstance(target_data, dict) else None,
+                "owner_match": source_data.get('owner') == target_data.get('owner') if isinstance(source_data, dict) and isinstance(target_data, dict) else None,
+                "group_match": source_data.get('group') == target_data.get('group') if isinstance(source_data, dict) and isinstance(target_data, dict) else None,
+                "permission_match": source_data.get('mode') == target_data.get('mode') if isinstance(source_data, dict) and isinstance(target_data, dict) else None,
+                "timestamp_match": abs(source_data.get('mtime', 0) - target_data.get('mtime', 0)) <= 1 if isinstance(source_data, dict) and isinstance(target_data, dict) else None
+            },
+            "differences": []
+        }
+        
+        # Add detailed differences
+        if not entry['match_status']['checksum_match']:
+            entry['differences'].append({
+                "field": "checksum",
+                "source": source_checksum,
+                "target": target_checksum
+            })
+        
+        if not entry['match_status']['size_match'] and entry['match_status']['size_match'] is not None:
+            entry['differences'].append({
+                "field": "size",
+                "source": source_data.get('size'),
+                "target": target_data.get('size'),
+                "difference": abs(source_data.get('size', 0) - target_data.get('size', 0))
+            })
+        
+        if not entry['match_status']['owner_match'] and entry['match_status']['owner_match'] is not None:
+            entry['differences'].append({
+                "field": "owner",
+                "source": source_data.get('owner'),
+                "target": target_data.get('owner')
+            })
+        
+        if not entry['match_status']['permission_match'] and entry['match_status']['permission_match'] is not None:
+            entry['differences'].append({
+                "field": "permissions",
+                "source": source_data.get('mode'),
+                "target": target_data.get('mode')
+            })
+        
+        if not entry['match_status']['timestamp_match'] and entry['match_status']['timestamp_match'] is not None:
+            time_diff = abs(source_data.get('mtime', 0) - target_data.get('mtime', 0))
+            entry['differences'].append({
+                "field": "modified_time",
+                "source": source_data.get('mtime_iso'),
+                "target": target_data.get('mtime_iso'),
+                "difference_seconds": round(time_diff, 2)
+            })
+        
+        # Calculate overall match status
+        entry['is_identical'] = all([
+            entry['match_status']['checksum_match'],
+            entry['match_status'].get('size_match', True) in [True, None],
+            entry['match_status'].get('owner_match', True) in [True, None],
+            entry['match_status'].get('permission_match', True) in [True, None]
+        ])
+        
+        return entry
+    
+    def _create_single_file_entry(self, path: str, file_data: Dict, 
+                                  location: str, role: str) -> Dict[str, Any]:
+        """Create a file entry for files present in only one location"""
+        
+        checksum = file_data.get('checksum') if isinstance(file_data, dict) else file_data
+        
+        entry = {
+            "path": path,
+            "filename": os.path.basename(path),
+            "directory": os.path.dirname(path),
+            "extension": os.path.splitext(path)[1] or None,
+            "location": location,
+            "server_role": role,
+            "checksum": checksum,
+            "size": file_data.get('size') if isinstance(file_data, dict) else None,
+            "size_human": self._human_readable_size(file_data.get('size')) if isinstance(file_data, dict) else None,
+            "owner": file_data.get('owner') if isinstance(file_data, dict) else None,
+            "group": file_data.get('group') if isinstance(file_data, dict) else None,
+            "permissions": file_data.get('mode') if isinstance(file_data, dict) else None,
+            "permissions_octal": f"0o{file_data.get('mode')}" if isinstance(file_data, dict) and file_data.get('mode') else None,
+            "modified_timestamp": file_data.get('mtime') if isinstance(file_data, dict) else None,
+            "modified_datetime": file_data.get('mtime_iso') if isinstance(file_data, dict) else None,
+            "created_timestamp": file_data.get('ctime') if isinstance(file_data, dict) else None,
+            "created_datetime": file_data.get('ctime_iso') if isinstance(file_data, dict) else None
+        }
+        
+        return entry
+    
+    def _update_statistics(self, stats: Dict, path: str, file_data: Dict):
+        """Update statistics for directory, extension, and owner distributions"""
+        
+        # Directory statistics
+        directory = os.path.dirname(path)
+        if directory not in stats['by_directory']:
+            stats['by_directory'][directory] = 0
+        stats['by_directory'][directory] += 1
+        
+        # Extension statistics
+        ext = os.path.splitext(path)[1] or 'no_extension'
+        if ext not in stats['by_extension']:
+            stats['by_extension'][ext] = 0
+        stats['by_extension'][ext] += 1
+        
+        # Owner statistics
+        if isinstance(file_data, dict) and 'owner' in file_data:
+            owner = file_data['owner']
+            if owner not in stats['by_owner']:
+                stats['by_owner'][owner] = 0
+            stats['by_owner'][owner] += 1
+    
+    def _human_readable_size(self, size: int) -> str:
+        """Convert bytes to human readable format"""
+        if size is None:
+            return None
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size < 1024.0:
+                return f"{size:.2f} {unit}"
+            size /= 1024.0
+        return f"{size:.2f} PB"
+    
+    def export_json(self, output_file: str = None, pretty: bool = True) -> str:
+        """Generate and optionally save JSON response"""
+        response = self.generate_frontend_response()
+        
+        if pretty:
+            json_output = json.dumps(response, indent=2, ensure_ascii=False)
+        else:
+            json_output = json.dumps(response, ensure_ascii=False)
+        
+        if output_file:
+            with open(output_file, 'w') as f:
+                f.write(json_output)
+        
+        return json_output
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Generate frontend-ready JSON comparison response'
+    )
+    parser.add_argument('--manifests', nargs='+', required=True,
+                       help='Manifest files to compare')
+    parser.add_argument('--source', help='Source server identifier')
+    parser.add_argument('--target', help='Target server identifier')
+    parser.add_argument('--output', help='Output JSON file (optional)')
+    parser.add_argument('--minify', action='store_true',
+                       help='Output minified JSON (no pretty printing)')
+    parser.add_argument('--filter-ext', help='Filter by file extension')
+    parser.add_argument('--filter-dir', help='Filter by directory path')
+    parser.add_argument('--limit', type=int, help='Limit number of results per category')
+    
+    args = parser.parse_args()
+    
+    # Create comparer instance
+    comparer = FrontendComparer(source_server=args.source, target_server=args.target)
+    
+    # Load manifests
+    comparer.load_manifests(args.manifests)
+    
+    # Generate response
+    response = comparer.generate_frontend_response()
+    
+    # Apply filters if specified
+    if args.filter_ext or args.filter_dir or args.limit:
+        response = apply_filters(response, args)
+    
+    # Output JSON
+    if args.output:
+        comparer.export_json(args.output, pretty=not args.minify)
+        print(f"JSON response saved to {args.output}")
+    else:
+        # Print to stdout for API response
+        print(json.dumps(response, indent=None if args.minify else 2, ensure_ascii=False))
+
+def apply_filters(response: Dict, args) -> Dict:
+    """Apply filters to the response"""
+    
+    if args.filter_ext:
+        ext = args.filter_ext if args.filter_ext.startswith('.') else f".{args.filter_ext}"
+        
+        response['files']['matching'] = [
+            f for f in response['files']['matching'] 
+            if f['extension'] == ext
+        ]
+        response['files']['mismatched'] = [
+            f for f in response['files']['mismatched'] 
+            if f['extension'] == ext
+        ]
+        response['files']['only_in_source'] = [
+            f for f in response['files']['only_in_source'] 
+            if f['extension'] == ext
+        ]
+        response['files']['only_in_target'] = [
+            f for f in response['files']['only_in_target'] 
+            if f['extension'] == ext
+        ]
+    
+    if args.filter_dir:
+        response['files']['matching'] = [
+            f for f in response['files']['matching'] 
+            if f['directory'].startswith(args.filter_dir)
+        ]
+        response['files']['mismatched'] = [
+            f for f in response['files']['mismatched'] 
+            if f['directory'].startswith(args.filter_dir)
+        ]
+        response['files']['only_in_source'] = [
+            f for f in response['files']['only_in_source'] 
+            if f['directory'].startswith(args.filter_dir)
+        ]
+        response['files']['only_in_target'] = [
+            f for f in response['files']['only_in_target'] 
+            if f['directory'].startswith(args.filter_dir)
+        ]
+    
+    if args.limit:
+        response['files']['matching'] = response['files']['matching'][:args.limit]
+        response['files']['mismatched'] = response['files']['mismatched'][:args.limit]
+        response['files']['only_in_source'] = response['files']['only_in_source'][:args.limit]
+        response['files']['only_in_target'] = response['files']['only_in_target'][:args.limit]
+    
+    # Update summary counts after filtering
+    response['summary']['matching_files'] = len(response['files']['matching'])
+    response['summary']['mismatched_files'] = len(response['files']['mismatched'])
+    response['summary']['files_only_in_source'] = len(response['files']['only_in_source'])
+    response['summary']['files_only_in_target'] = len(response['files']['only_in_target'])
+    response['summary']['total_files_compared'] = (
+        response['summary']['matching_files'] + response['summary']['mismatched_files']
+    )
+    
+    return response
+
+if __name__ == "__main__":
+    main()
+
+
+{
+  "metadata": {
+    "comparison_id": "cmp_20260419_143022",
+    "timestamp": "2026-04-19T14:30:22.123456",
+    "timestamp_unix": 1745087422.123456,
+    "source": {
+      "server": "prod-server-01",
+      "hostname": "prod01.example.com",
+      "role": "production",
+      "scan_time": "2026-04-19T14:25:10.000000",
+      "total_files": 1542,
+      "ip_address": "192.168.1.100"
+    },
+    "target": {
+      "server": "staging-server-01",
+      "hostname": "stg01.example.com",
+      "role": "staging",
+      "scan_time": "2026-04-19T14:26:15.000000",
+      "total_files": 1543,
+      "ip_address": "192.168.1.101"
+    }
+  },
+  "summary": {
+    "total_files_compared": 1540,
+    "matching_files": 1498,
+    "mismatched_files": 42,
+    "files_only_in_source": 2,
+    "files_only_in_target": 3,
+    "match_percentage": 97.27,
+    "metadata_differences": {
+      "owner_mismatch": 15,
+      "group_mismatch": 8,
+      "permission_mismatch": 23,
+      "timestamp_mismatch": 42,
+      "size_mismatch": 5
+    }
+  },
+  "files": {
+    "matching": [
+      {
+        "path": "app1/config/settings.py",
+        "filename": "settings.py",
+        "directory": "app1/config",
+        "extension": ".py",
+        "source": {
+          "server_role": "production",
+          "checksum": "a1b2c3d4e5f6...",
+          "size": 4096,
+          "size_human": "4.00 KB",
+          "owner": "appuser",
+          "group": "appgroup",
+          "permissions": "0644",
+          "permissions_octal": "0o0644",
+          "modified_timestamp": 1745087422.0,
+          "modified_datetime": "2026-04-19T10:30:22",
+          "created_timestamp": 1745000000.0,
+          "created_datetime": "2026-04-18T10:13:20",
+          "inode": 123456
+        },
+        "target": {
+          "server_role": "staging",
+          "checksum": "a1b2c3d4e5f6...",
+          "size": 4096,
+          "size_human": "4.00 KB",
+          "owner": "appuser",
+          "group": "appgroup",
+          "permissions": "0644",
+          "permissions_octal": "0o0644",
+          "modified_timestamp": 1745087422.0,
+          "modified_datetime": "2026-04-19T10:30:22",
+          "created_timestamp": 1745000000.0,
+          "created_datetime": "2026-04-18T10:13:20",
+          "inode": 654321
+        },
+        "match_status": {
+          "checksum_match": true,
+          "size_match": true,
+          "owner_match": true,
+          "group_match": true,
+          "permission_match": true,
+          "timestamp_match": true
+        },
+        "differences": [],
+        "is_identical": true
+      }
+    ],
+    "mismatched": [
+      {
+        "path": "app2/config/database.yml",
+        "filename": "database.yml",
+        "directory": "app2/config",
+        "extension": ".yml",
+        "source": {
+          "server_role": "production",
+          "checksum": "x9y8z7w6v5u4...",
+          "size": 2048,
+          "size_human": "2.00 KB",
+          "owner": "deploy",
+          "group": "deploy",
+          "permissions": "0600",
+          "permissions_octal": "0o0600",
+          "modified_timestamp": 1745080000.0,
+          "modified_datetime": "2026-04-19T08:26:40",
+          "created_timestamp": 1745000000.0,
+          "created_datetime": "2026-04-18T10:13:20"
+        },
+        "target": {
+          "server_role": "staging",
+          "checksum": "a1b2c3d4e5f6...",
+          "size": 2048,
+          "size_human": "2.00 KB",
+          "owner": "deploy",
+          "group": "deploy",
+          "permissions": "0644",
+          "permissions_octal": "0o0644",
+          "modified_timestamp": 1745090000.0,
+          "modified_datetime": "2026-04-19T11:13:20",
+          "created_timestamp": 1745010000.0,
+          "created_datetime": "2026-04-18T13:00:00"
+        },
+        "match_status": {
+          "checksum_match": false,
+          "size_match": true,
+          "owner_match": true,
+          "group_match": true,
+          "permission_match": false,
+          "timestamp_match": false
+        },
+        "differences": [
+          {
+            "field": "checksum",
+            "source": "x9y8z7w6v5u4...",
+            "target": "a1b2c3d4e5f6..."
+          },
+          {
+            "field": "permissions",
+            "source": "0600",
+            "target": "0644"
+          },
+          {
+            "field": "modified_time",
+            "source": "2026-04-19T08:26:40",
+            "target": "2026-04-19T11:13:20",
+            "difference_seconds": 10000.0
+          }
+        ],
+        "is_identical": false
+      }
+    ],
+    "only_in_source": [
+      {
+        "path": "app1/temp/cache_file.tmp",
+        "filename": "cache_file.tmp",
+        "directory": "app1/temp",
+        "extension": ".tmp",
+        "location": "source",
+        "server_role": "production",
+        "checksum": "m9n8b7v6c5x4...",
+        "size": 1024,
+        "size_human": "1.00 KB",
+        "owner": "appuser",
+        "group": "appgroup",
+        "permissions": "0644",
+        "permissions_octal": "0o0644",
+        "modified_timestamp": 1745085000.0,
+        "modified_datetime": "2026-04-19T09:50:00"
+      }
+    ],
+    "only_in_target": [
+      {
+        "path": "app2/patches/hotfix.patch",
+        "filename": "hotfix.patch",
+        "directory": "app2/patches",
+        "extension": ".patch",
+        "location": "target",
+        "server_role": "staging",
+        "checksum": "p9o8i7u6y5t4...",
+        "size": 512,
+        "size_human": "512 B",
+        "owner": "developer",
+        "group": "developers",
+        "permissions": "0644",
+        "permissions_octal": "0o0644",
+        "modified_timestamp": 1745095000.0,
+        "modified_datetime": "2026-04-19T12:36:40"
+      }
+    ]
+  },
+  "statistics": {
+    "by_directory": {
+      "app1/config": 45,
+      "app2/config": 32,
+      "app1/lib": 234
+    },
+    "by_extension": {
+      ".py": 567,
+      ".js": 432,
+      ".yml": 89,
+      ".conf": 156
+    },
+    "by_owner": {
+      "appuser": 1200,
+      "deploy": 200,
+      "root": 142
+    }
+  }
+}
+
+
+// ComparisonViewer.jsx
+import React, { useState, useEffect } from 'react';
+
+const ComparisonViewer = ({ comparisonData }) => {
+  const [filter, setFilter] = useState('all');
+  const [searchTerm, setSearchTerm] = useState('');
+  
+  const getFilteredFiles = () => {
+    let files = [];
+    if (filter === 'all') {
+      files = [
+        ...comparisonData.files.matching,
+        ...comparisonData.files.mismatched,
+        ...comparisonData.files.only_in_source,
+        ...comparisonData.files.only_in_target
+      ];
+    } else {
+      files = comparisonData.files[filter] || [];
+    }
+    
+    if (searchTerm) {
+      files = files.filter(f => 
+        f.path.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+    
+    return files;
+  };
+  
+  return (
+    <div className="comparison-viewer">
+      <div className="summary-cards">
+        <div className="card">
+          <h3>Source</h3>
+          <p>Server: {comparisonData.metadata.source.server}</p>
+          <p>Files: {comparisonData.metadata.source.total_files}</p>
+          <p>Role: {comparisonData.metadata.source.role}</p>
+        </div>
+        
+        <div className="card">
+          <h3>Target</h3>
+          <p>Server: {comparisonData.metadata.target.server}</p>
+          <p>Files: {comparisonData.metadata.target.total_files}</p>
+          <p>Role: {comparisonData.metadata.target.role}</p>
+        </div>
+        
+        <div className="card">
+          <h3>Comparison</h3>
+          <p>Match Rate: {comparisonData.summary.match_percentage}%</p>
+          <p>Matching: {comparisonData.summary.matching_files}</p>
+          <p>Mismatched: {comparisonData.summary.mismatched_files}</p>
+        </div>
+      </div>
+      
+      <div className="filters">
+        <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+          <option value="all">All Files</option>
+          <option value="matching">Matching</option>
+          <option value="mismatched">Mismatched</option>
+          <option value="only_in_source">Only in Source</option>
+          <option value="only_in_target">Only in Target</option>
+        </select>
+        
+        <input 
+          type="text" 
+          placeholder="Search files..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+      </div>
+      
+      <table className="files-table">
+        <thead>
+          <tr>
+            <th>Path</th>
+            <th>Source Checksum</th>
+            <th>Target Checksum</th>
+            <th>Owner</th>
+            <th>Modified</th>
+            <th>Status</th>
+         
+
