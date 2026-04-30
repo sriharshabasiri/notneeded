@@ -1,4 +1,16 @@
-find /path/to/parent/dir -type f -exec md5sum {} \; | while read csum fpath; do
-  stat -c "%h|%f|%U|%s|%y" "$fpath" | tr '\n' '|'
-  echo "$csum"
-done
+find /path/to/parent/dir -type f -exec stat --printf="%n|%U|%s|%y|" {} \; -exec cksum {} \; | awk '
+  BEGIN { FS="|"; OFS="|" }
+  {
+    if (NF == 4) {
+      path=$1; owner=$2; size=$3; timestamp=$4;
+      getline cksum_line;
+      split(cksum_line, cksum_arr, " ");
+      csum=cksum_arr[1];
+      split(timestamp, ts_arr, " ");
+      date_parts=split(ts_arr[1], date_arr, "-");
+      formatted_date=sprintf("%02d-%02d-%04d", date_arr[2], date_arr[3], date_arr[1]);
+      formatted_time=substr(ts_arr[2], 1, 8);
+      print path, owner, size, formatted_date" - "formatted_time, csum
+    }
+  }
+'
