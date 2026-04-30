@@ -1,1 +1,4 @@
-
+find /path/to/parent/dir -type f -exec md5sum {} \; | while read csum fpath; do
+  stat -c "%h|%f|%U|%s|%y" "$fpath" | tr '\n' '|'
+  echo "$csum"
+done
