@@ -1,20 +1,477 @@
-#!/bin/bash
-# Best Performance for Huge Directories (500K+ files)
+Step 1: Fast Manifest Generator (with optional quick mode)
 
-WORK_DIR="/path/to/parent/dir"  # CHANGE THIS TO YOUR ACTUAL PATH
-TEMP_BASE="/tmp/file_checksums_$$"
 
-export -f process
-process() {
-    file="$1"
-    cksum_out=$(cksum "$file")
-    csum=${cksum_out%% *}
-    size=$(echo $cksum_out | awk '{print $2}')
-    owner=$(stat -c "%U" "$file")
-    ts=$(stat -c "%y" "$file" | cut -d' ' -f1,2 | cut -d'.' -f1 | sed 's/\([0-9]\{4\}\)-\([0-9]\{2\}\)-\([0-9]\{2\}\)/\2-\3-\1/')
-    echo "$file|$owner|$size|$ts|$csum"
-}
-export -f process
+#!/usr/bin/env python3
+# fast_manifest.py - Optimized manifest generator
 
-# Process files in parallel (4 cores)
-find "$WORK_DIR" -type f -print0 | xargs -0 -P 4 -n 50 bash -c 'for f; do process "$f"; done' _
+import os
+import sys
+import hashlib
+import binascii
+from pathlib import Path
+from multiprocessing import Pool, cpu_count
+from datetime import datetime
+import argparse
+import json
+
+def quick_file_info(filepath):
+    """Get file info without checksum (fast mode)"""
+    try:
+        stat = os.stat(filepath)
+        return {
+            'path': str(filepath),
+            'size': stat.st_size,
+            'mtime': stat.st_mtime,
+            'owner': stat.st_uid,
+            'mode': stat.st_mode
+        }
+    except Exception:
+        return None
+
+def get_checksum_fast(filepath):
+    """Fast checksum using CRC32 (like cksum)"""
+    try:
+        crc = 0
+        with open(filepath, 'rb') as f:
+            # Read in 64KB chunks for large files
+            for chunk in iter(lambda: f.read(65536), b''):
+                crc = binascii.crc32(chunk, crc)
+        return crc & 0xFFFFFFFF
+    except Exception:
+        return None
+
+def get_checksum_md5(filepath):
+    """MD5 checksum for better accuracy (slower)"""
+    try:
+        md5 = hashlib.md5()
+        with open(filepath, 'rb') as f:
+            for chunk in iter(lambda: f.read(65536), b''):
+                md5.update(chunk)
+        return md5.hexdigest()
+    except Exception:
+        return None
+
+def process_file_quick(args):
+    """Process file for initial scan (no checksum)"""
+    filepath, use_md5 = args
+    info = quick_file_info(filepath)
+    if info:
+        if use_md5:
+            info['checksum'] = get_checksum_md5(filepath)
+        else:
+            info['checksum'] = get_checksum_fast(filepath)
+    return info
+
+def generate_manifest_parallel(root_dir, workers=None, use_md5=False, quick_mode=False):
+    """Generate manifest with parallel processing"""
+    if workers is None:
+        workers = cpu_count()
+    
+    # Collect all files
+    print(f"Scanning {root_dir}...", file=sys.stderr)
+    all_files = []
+    for root, dirs, files in os.walk(root_dir):
+        # Skip hidden directories if needed
+        # dirs[:] = [d for d in dirs if not d.startswith('.')]
+        for file in files:
+            all_files.append(os.path.join(root, file))
+    
+    print(f"Found {len(all_files)} files. Processing with {workers} workers...", file=sys.stderr)
+    
+    # Prepare arguments
+    args_list = [(f, use_md5) for f in all_files]
+    
+    # Process in parallel
+    with Pool(workers) as pool:
+        results = []
+        for i, result in enumerate(pool.imap_unordered(process_file_quick, args_list, chunksize=100)):
+            if result:
+                results.append(result)
+            if i % 10000 == 0:
+                print(f"  Processed {i}/{len(all_files)} files...", file=sys.stderr)
+    
+    # Sort by path
+    results.sort(key=lambda x: x['path'])
+    
+    return results
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Generate file manifest')
+    parser.add_argument('directory', help='Root directory to scan')
+    parser.add_argument('-o', '--output', help='Output file')
+    parser.add_argument('-w', '--workers', type=int, default=cpu_count())
+    parser.add_argument('--md5', action='store_true', help='Use MD5 instead of CRC32')
+    parser.add_argument('--quick', action='store_true', help='Quick mode (no checksums)')
+    
+    args = parser.parse_args()
+    
+    results = generate_manifest_parallel(args.directory, args.workers, args.md5, args.quick)
+    
+    # Output in pipe format
+    output_lines = []
+    for r in results:
+        timestamp = datetime.fromtimestamp(r['mtime']).strftime("%m-%d-%Y - %H:%M:%S")
+        line = f"{r['path']}|{r['owner']}|{r['size']}|{timestamp}|{r.get('checksum', 'N/A')}"
+        output_lines.append(line)
+    
+    output_data = '\n'.join(output_lines)
+    
+    if args.output:
+        with open(args.output, 'w') as f:
+            f.write(output_data)
+        print(f"Manifest written to {args.output}", file=sys.stderr)
+    else:
+        print(output_data)
+
+
+Step 2: Rsync-Style Comparison Engine
+#!/usr/bin/env python3
+# rsync_compare.py - Rsync-style comparison with optimizations
+
+import sys
+import os
+import argparse
+from collections import defaultdict
+from datetime import datetime
+import hashlib
+
+class RsyncStyleComparator:
+    def __init__(self, use_checksum=False, threshold_percent=0.01):
+        self.use_checksum = use_checksum
+        self.threshold_percent = threshold_percent
+        
+    def load_manifest(self, filepath):
+        """Load manifest and organize by size groups"""
+        manifest = {}
+        size_groups = defaultdict(list)
+        
+        print(f"Loading {filepath}...", file=sys.stderr)
+        with open(filepath, 'r') as f:
+            for line in f:
+                parts = line.strip().split('|')
+                if len(parts) >= 5:
+                    path, owner, size, timestamp, checksum = parts[:5]
+                    size = int(size)
+                    entry = {
+                        'path': path,
+                        'owner': owner,
+                        'size': size,
+                        'timestamp': timestamp,
+                        'checksum': checksum if checksum != 'N/A' else None
+                    }
+                    manifest[path] = entry
+                    size_groups[size].append(entry)
+        
+        print(f"Loaded {len(manifest)} files across {len(size_groups)} size groups", file=sys.stderr)
+        return manifest, size_groups
+    
+    def find_matches_by_size(self, manifest1, size_groups2):
+        """First pass: find potential matches by size only"""
+        matches_by_size = defaultdict(list)
+        
+        for path1, info1 in manifest1.items():
+            size = info1['size']
+            if size in size_groups2:
+                for info2 in size_groups2[size]:
+                    matches_by_size[path1].append(info2)
+        
+        return matches_by_size
+    
+    def compare_checksums(self, info1, info2):
+        """Compare checksums"""
+        if not self.use_checksum:
+            return True  # Skip checksum check if not required
+        
+        if info1['checksum'] and info2['checksum']:
+            return info1['checksum'] == info2['checksum']
+        return False
+    
+    def rsync_algorithm(self, manifest1, manifest2, size_groups2):
+        """
+        Rsync-style comparison:
+        1. First compare by size only (fast)
+        2. Then verify with checksums (if enabled)
+        3. Identify uniquely sized files instantly
+        """
+        
+        print("\n=== RSYNC-STYLE COMPARISON ===", file=sys.stderr)
+        
+        # Track unique sizes
+        sizes1 = set(info['size'] for info in manifest1.values())
+        sizes2 = set(size_groups2.keys())
+        
+        unique_sizes_1 = sizes1 - sizes2
+        unique_sizes_2 = sizes2 - sizes1
+        
+        # Files with unique sizes are guaranteed different
+        only_in_1 = set()
+        only_in_2 = set()
+        
+        for path, info in manifest1.items():
+            if info['size'] in unique_sizes_1:
+                only_in_1.add(path)
+        
+        for size in unique_sizes_2:
+            for info in size_groups2[size]:
+                only_in_2.add(info['path'])
+        
+        # Process files with matching sizes
+        common_sizes = sizes1 & sizes2
+        potential_matches = defaultdict(list)  # Potential matches by size
+        size_matches = 0
+        
+        # Group potential matches
+        for path, info in manifest1.items():
+            size = info['size']
+            if size in common_sizes and path not in only_in_1:
+                potential_matches[size].append(path)
+                size_matches += 1
+        
+        print(f"Files with unique sizes (guaranteed different):", file=sys.stderr)
+        print(f"  Only in server1: {len(only_in_1)}", file=sys.stderr)
+        print(f"  Only in server2: {len(only_in_2)}", file=sys.stderr)
+        print(f"Files with matching sizes (need verification): {size_matches}", file=sys.stderr)
+        
+        # For matching sizes, do detailed comparison
+        matched = set()
+        mismatched = []
+        checksum_verified = 0
+        
+        for size in common_sizes:
+            files1 = potential_matches[size]
+            files2 = size_groups2[size]
+            
+            if len(files1) == 1 and len(files2) == 1:
+                # Single file with this size on both sides - strong candidate
+                path1 = files1[0]
+                path2 = files2[0]['path']
+                
+                if not self.use_checksum:
+                    # Without checksums, assume match
+                    matched.add((path1, path2))
+                else:
+                    # Verify with checksum
+                    info1 = manifest1[path1]
+                    info2 = files2[0]
+                    if info1['checksum'] == info2['checksum']:
+                        matched.add((path1, path2))
+                        checksum_verified += 1
+                    else:
+                        mismatched.append({
+                            'path1': path1,
+                            'path2': path2,
+                            'size': size,
+                            'checksum1': info1['checksum'],
+                            'checksum2': info2['checksum']
+                        })
+            else:
+                # Multiple files with same size - need more careful matching
+                # Use checksum as tiebreaker
+                if self.use_checksum:
+                    # Create mapping of checksums to files
+                    checksum_map2 = defaultdict(list)
+                    for info2 in files2:
+                        if info2['checksum']:
+                            checksum_map2[info2['checksum']].append(info2['path'])
+                    
+                    for path1 in files1:
+                        info1 = manifest1[path1]
+                        if info1['checksum'] in checksum_map2:
+                            # Found checksum match
+                            for path2 in checksum_map2[info1['checksum']]:
+                                matched.add((path1, path2))
+                                checksum_verified += 1
+                            # Remove used checksum to avoid duplicates
+                            del checksum_map2[info1['checksum']]
+                        else:
+                            # No checksum match
+                            mismatched.append({
+                                'path1': path1,
+                                'path2': None,
+                                'size': size,
+                                'checksum1': info1['checksum'],
+                                'checksum2': None
+                            })
+        
+        return {
+            'matched': matched,
+            'mismatched': mismatched,
+            'only_in_server1': only_in_1,
+            'only_in_server2': only_in_2,
+            'stats': {
+                'total_server1': len(manifest1),
+                'total_server2': len(manifest2),
+                'matched_count': len(matched),
+                'mismatched_count': len(mismatched),
+                'unique_sizes_server1': len(only_in_1),
+                'unique_sizes_server2': len(only_in_2),
+                'checksum_verified': checksum_verified
+            }
+        }
+    
+    def generate_diff_report(self, comparison, output_dir='.'):
+        """Generate detailed diff report"""
+        stats = comparison['stats']
+        
+        print("\n" + "="*80)
+        print("RSYNC-STYLE COMPARISON REPORT")
+        print("="*80)
+        print(f"\nServer1 total files: {stats['total_server1']:,}")
+        print(f"Server2 total files: {stats['total_server2']:,}")
+        print(f"\n✓ Identical files: {stats['matched_count']:,}")
+        print(f"⚠ Different files: {stats['mismatched_count']:,}")
+        print(f"📁 Only on Server1: {stats['unique_sizes_server1']:,}")
+        print(f"📁 Only on Server2: {stats['unique_sizes_server2']:,}")
+        
+        if self.use_checksum:
+            print(f"\n🔐 Checksum verified: {stats['checksum_verified']:,} files")
+        
+        # Generate rsync-style commands
+        if stats['unique_sizes_server1'] > 0:
+            print("\n" + "-"*80)
+            print("TO SYNC FROM SERVER2 TO SERVER1 (rsync commands):")
+            print("-"*80)
+            print(f"# Files only on Server2 (missing from Server1):")
+            print(f"rsync -avz --files-from=only_on_server2.txt server2:/path/to/dir/ server1:/path/to/dir/")
+        
+        if stats['mismatched_count'] > 0:
+            print(f"\n# Mismatched files (different content):")
+            print(f"rsync -avz --files-from=mismatched_files.txt server2:/path/to/dir/ server1:/path/to/dir/")
+        
+        # Export detailed lists
+        if comparison['only_in_server1']:
+            with open(f'{output_dir}/only_on_server1.txt', 'w') as f:
+                f.write('\n'.join(sorted(comparison['only_in_server1'])))
+            print(f"\n📄 Detailed list: only_on_server1.txt")
+        
+        if comparison['only_in_server2']:
+            with open(f'{output_dir}/only_on_server2.txt', 'w') as f:
+                f.write('\n'.join(sorted(comparison['only_in_server2'])))
+            print(f"📄 Detailed list: only_on_server2.txt")
+        
+        if comparison['mismatched']:
+            with open(f'{output_dir}/mismatched_files.txt', 'w') as f:
+                for m in comparison['mismatched']:
+                    if m['path2']:
+                        f.write(f"{m['path1']}|{m['path2']}|{m['size']}\n")
+                    else:
+                        f.write(f"{m['path1']}|NOT_FOUND|{m['size']}\n")
+            print(f"📄 Detailed list: mismatched_files.txt")
+        
+        if comparison['matched']:
+            with open(f'{output_dir}/matched_files.txt', 'w') as f:
+                for path1, path2 in sorted(comparison['matched']):
+                    f.write(f"{path1}|{path2}\n")
+            print(f"📄 Detailed list: matched_files.txt")
+
+def main():
+    parser = argparse.ArgumentParser(description='Rsync-style file comparison')
+    parser.add_argument('manifest1', help='Manifest from server1')
+    parser.add_argument('manifest2', help='Manifest from server2')
+    parser.add_argument('--checksum', action='store_true', 
+                       help='Use checksum verification (slower but accurate)')
+    parser.add_argument('--threshold', type=float, default=0.01,
+                       help='Size match threshold percentage (default: 0.01%%)')
+    parser.add_argument('-o', '--output-dir', default='.',
+                       help='Output directory for reports')
+    
+    args = parser.parse_args()
+    
+    # Create comparator
+    comparator = RsyncStyleComparator(use_checksum=args.checksum, 
+                                      threshold_percent=args.threshold)
+    
+    # Load manifests
+    manifest1, size_groups1 = comparator.load_manifest(args.manifest1)
+    manifest2, size_groups2 = comparator.load_manifest(args.manifest2)
+    
+    # Run rsync-style comparison
+    comparison = comparator.rsync_algorithm(manifest1, manifest2, size_groups2)
+    
+    # Generate report
+    comparator.generate_diff_report(comparison, args.output_dir)
+    
+    # Performance summary
+    print("\n" + "="*80)
+    print("PERFORMANCE SUMMARY")
+    print("="*80)
+    print(f"Comparison method: {'Size + Checksum' if args.checksum else 'Size only'}")
+    print(f"Unique size filtering: Enabled (fast path)")
+    print(f"Files requiring detailed check: {comparison['stats']['matched_count'] + comparison['stats']['mismatched_count']:,}")
+    print(f"Files resolved by size uniqueness: {comparison['stats']['unique_sizes_server1'] + comparison['stats']['unique_sizes_server2']:,}")
+
+if __name__ == "__main__":
+    main()
+
+
+Step 3: Quick Comparison Script (For Very Large Deployments)
+#!/usr/bin/env python3
+# quick_sync_check.py - Ultra-fast size-only comparison
+
+import sys
+import argparse
+from collections import defaultdict
+
+def quick_size_compare(manifest1, manifest2):
+    """Ultra-fast comparison using only file sizes"""
+    
+    # Build size indexes
+    sizes1 = defaultdict(list)
+    sizes2 = defaultdict(list)
+    
+    with open(manifest1, 'r') as f:
+        for line in f:
+            parts = line.strip().split('|')
+            if len(parts) >= 3:
+                path = parts[0]
+                size = int(parts[2])
+                sizes1[size].append(path)
+    
+    with open(manifest2, 'r') as f:
+        for line in f:
+            parts = line.strip().split('|')
+            if len(parts) >= 3:
+                path = parts[0]
+                size = int(parts[2])
+                sizes2[size].append(path)
+    
+    # Find common and unique sizes
+    sizes_set1 = set(sizes1.keys())
+    sizes_set2 = set(sizes2.keys())
+    
+    common_sizes = sizes_set1 & sizes_set2
+    unique_to_1 = sizes_set1 - sizes_set2
+    unique_to_2 = sizes_set2 - sizes_set1
+    
+    # Count files
+    files_only_1 = sum(len(sizes1[s]) for s in unique_to_1)
+    files_only_2 = sum(len(sizes2[s]) for s in unique_to_2)
+    files_potential_match = sum(len(sizes1[s]) for s in common_sizes)
+    
+    print("\n=== QUICK SIZE-ONLY COMPARISON ===")
+    print(f"Total files Server1: {sum(len(v) for v in sizes1.values()):,}")
+    print(f"Total files Server2: {sum(len(v) for v in sizes2.values()):,}")
+    print(f"\n✅ Files with matching sizes (potential matches): {files_potential_match:,}")
+    print(f"📁 Files only on Server1 (unique sizes): {files_only_1:,}")
+    print(f"📁 Files only on Server2 (unique sizes): {files_only_2:,}")
+    
+    # Generate rsync command for unique sizes
+    if files_only_2 > 0:
+        print("\n💡 SUGGESTION: These files likely need syncing from Server2 to Server1")
+        print(f"   Estimated transfer size: {sum(s * len(sizes2[s]) for s in unique_to_2) / 1024**3:.2f} GB")
+    
+    return {
+        'unique_sizes_1': unique_to_1,
+        'unique_sizes_2': unique_to_2,
+        'common_sizes': common_sizes,
+        'files_only_1': files_only_1,
+        'files_only_2': files_only_2
+    }
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Quick size-only comparison')
+    parser.add_argument('manifest1', help='Manifest from server1')
+    parser.add_argument('manifest2', help='Manifest from server2')
+    args = parser.parse_args()
+    
+    quick_size_compare(args.manifest1, args.manifest2)
